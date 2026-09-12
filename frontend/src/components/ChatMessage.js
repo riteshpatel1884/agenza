@@ -1,6 +1,8 @@
-export default function ChatMessage({ role, content, onBusyBackground }) {
+import JobResults from "./JobResults";
+
+export default function ChatMessage({ role, content, onBusyBackground, jobs, jobsCount }) {
   const isUser = role === "user";
-  const isEmptyAssistant = !isUser && content.length === 0;
+  const isEmptyAssistant = !isUser && content.length === 0 && !jobs;
 
   if (isUser) {
     return (
@@ -35,12 +37,17 @@ export default function ChatMessage({ role, content, onBusyBackground }) {
             ))}
           </div>
         ) : (
-          <div
-            className={`whitespace-pre-wrap text-[15px] leading-7 text-[var(--text-primary)] ${onBusyBackground ? "rounded-xl px-3.5 py-2" : ""}`}
-            style={panelStyle}
-          >
-            {content}
-          </div>
+          <>
+            {content && (
+              <div
+                className={`whitespace-pre-wrap text-[15px] leading-7 text-[var(--text-primary)] ${onBusyBackground ? "rounded-xl px-3.5 py-2" : ""}`}
+                style={panelStyle}
+              >
+                {content}
+              </div>
+            )}
+            {jobs && <JobResults jobs={jobs} count={jobsCount} />}
+          </>
         )}
       </div>
     </div>

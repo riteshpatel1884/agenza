@@ -15,7 +15,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk
+from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk, ToolMessage
 
 from agent import get_agent, list_models, DEFAULT_MODEL_ID
 from auth import get_current_user_id
@@ -34,6 +34,8 @@ from database import (
     list_automations,
     set_automation_enabled,
     delete_automation,
+    get_job_preferences,
+    save_job_preferences,
 )
 from scheduler import start_scheduler
 
@@ -200,6 +202,73 @@ async def delete_email_settings_route(user_id: str = Depends(get_current_user_id
     return {"configured": False}
 
 
+def _job_preferences_to_dict(p):
+    return {
+        "role": p.role or "",
+        "location": p.location or "",
+        "country": p.country or "in",
+        "max_days_old": p.max_days_old or 3,
+        "results_per_page": p.results_per_page or 15,
+        "min_salary": p.min_salary,
+        "job_type": p.job_type or "any",
+        "remote_only": bool(p.remote_only),
+        "keywords_exclude": p.keywords_exclude or "",
+    }
+
+
+@app.get("/job-preferences")
+async def get_job_preferences_route(user_id: str = Depends(get_current_user_id)):
+    prefs = get_job_preferences(user_id)
+
+    if not prefs:
+        return {"configured": False}
+
+    return {"configured": True, **_job_preferences_to_dict(prefs)}
+
+
+@app.post("/job-preferences")
+async def save_job_preferences_route(request: Request, user_id: str = Depends(get_current_user_id)):
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body."}, status_code=400)
+
+    role = (data.get("role") or "").strip()
+    if not role:
+        return JSONResponse({"error": "role is required."}, status_code=400)
+
+    min_salary = data.get("min_salary")
+    try:
+        min_salary = int(min_salary) if min_salary not in (None, "") else None
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "min_salary must be a number."}, status_code=400)
+
+    try:
+        max_days_old = int(data.get("max_days_old") or 3)
+        results_per_page = int(data.get("results_per_page") or 15)
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "max_days_old and results_per_page must be numbers."}, status_code=400)
+
+    job_type = data.get("job_type") or "any"
+    if job_type not in ("any", "full_time", "part_time", "contract", "permanent"):
+        return JSONResponse({"error": "Invalid job_type."}, status_code=400)
+
+    prefs = save_job_preferences(
+        user_id=user_id,
+        role=role,
+        location=(data.get("location") or "").strip(),
+        country=(data.get("country") or "in").strip().lower(),
+        max_days_old=max_days_old,
+        results_per_page=results_per_page,
+        min_salary=min_salary,
+        job_type=job_type,
+        remote_only=bool(data.get("remote_only")),
+        keywords_exclude=(data.get("keywords_exclude") or "").strip(),
+    )
+
+    return {"configured": True, **_job_preferences_to_dict(prefs)}
+
+
 def _automation_to_dict(a):
     return {
         "id": a.id,
@@ -339,6 +408,20 @@ async def chat_stream(request: Request, user_id: str = Depends(get_current_user_
             "from_name": email_settings.smtp_from_name,
         }
 
+    job_prefs = get_job_preferences(user_id)
+    if job_prefs:
+        configurable["job_preferences"] = {
+            "role": job_prefs.role,
+            "location": job_prefs.location,
+            "country": job_prefs.country,
+            "max_days_old": job_prefs.max_days_old,
+            "results_per_page": job_prefs.results_per_page,
+            "min_salary": job_prefs.min_salary,
+            "job_type": job_prefs.job_type,
+            "remote_only": bool(job_prefs.remote_only),
+            "keywords_exclude": job_prefs.keywords_exclude,
+        }
+
     config = {"configurable": configurable}
 
     def event_generator():
@@ -348,6 +431,20 @@ async def chat_stream(request: Request, user_id: str = Depends(get_current_user_
             inputs = {"messages": [HumanMessage(content=user_message)]}
 
             for chunk, metadata in agent.stream(inputs, config=config, stream_mode="messages"):
+                # search_jobs returns a JSON blob (see agent.py) rather than
+                # something the model should retype as text — forward it to
+                # the frontend directly as a "jobs" event so it renders as
+                # cards, instead of letting it flow into the token stream.
+                if isinstance(chunk, ToolMessage) and chunk.name == "search_jobs":
+                    try:
+                        parsed = json.loads(chunk.content)
+                    except (TypeError, ValueError):
+                        parsed = None
+
+                    if parsed and isinstance(parsed.get("jobs"), list):
+                        yield sse_data({"jobs": parsed["jobs"], "count": parsed.get("count")})
+                    continue
+
                 if not should_stream_chunk(chunk):
                     continue
 

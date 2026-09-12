@@ -101,6 +101,30 @@ class EmailAutomation(Base):
     last_sent_at = Column(DateTime, nullable=True)
 
 
+class JobPreferences(Base):
+    """
+    Per-user job-search preferences, entered through the Settings modal.
+    The chat agent reads these automatically whenever the user asks it to
+    find jobs, so they never have to restate role/location/etc. in the chat
+    itself — only an explicit mention in the message overrides these.
+    """
+
+    __tablename__ = "job_preferences"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, unique=True, index=True)
+    role = Column(String, default="")  # e.g. "Backend Developer" — required for a search
+    location = Column(String, default="")  # e.g. "Bangalore" or "Remote"
+    country = Column(String, default="in")  # Adzuna 2-letter country code
+    max_days_old = Column(Integer, default=3)  # "jobs from the last N days"
+    results_per_page = Column(Integer, default=15)
+    min_salary = Column(Integer, nullable=True)
+    job_type = Column(String, default="any")  # any | full_time | part_time | contract | permanent
+    remote_only = Column(Integer, default=0)  # 1/0
+    keywords_exclude = Column(String, default="")  # comma-separated terms to filter out
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
 
@@ -409,6 +433,70 @@ def list_enabled_automations():
 
     try:
         return db.query(EmailAutomation).filter(EmailAutomation.enabled == 1).all()
+
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Job search preferences — keyed by Clerk user id, same pattern as
+# EmailSettings above. Read by agent.py's search_jobs tool at call time.
+# ---------------------------------------------------------------------------
+
+
+def get_job_preferences(user_id: str):
+    db = SessionLocal()
+
+    try:
+        return (
+            db.query(JobPreferences)
+            .filter(JobPreferences.user_id == user_id)
+            .first()
+        )
+
+    finally:
+        db.close()
+
+
+def save_job_preferences(
+    user_id: str,
+    role: str,
+    location: str = "",
+    country: str = "in",
+    max_days_old: int = 3,
+    results_per_page: int = 15,
+    min_salary: int | None = None,
+    job_type: str = "any",
+    remote_only: bool = False,
+    keywords_exclude: str = "",
+):
+    db = SessionLocal()
+
+    try:
+        prefs = (
+            db.query(JobPreferences)
+            .filter(JobPreferences.user_id == user_id)
+            .first()
+        )
+
+        if not prefs:
+            prefs = JobPreferences(user_id=user_id)
+            db.add(prefs)
+
+        prefs.role = role
+        prefs.location = location
+        prefs.country = country or "in"
+        prefs.max_days_old = max_days_old
+        prefs.results_per_page = results_per_page
+        prefs.min_salary = min_salary
+        prefs.job_type = job_type
+        prefs.remote_only = 1 if remote_only else 0
+        prefs.keywords_exclude = keywords_exclude
+        prefs.updated_at = datetime.utcnow()
+
+        db.commit()
+        db.refresh(prefs)
+        return prefs
 
     finally:
         db.close()

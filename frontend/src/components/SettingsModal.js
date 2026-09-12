@@ -15,6 +15,8 @@ import {
   createAutomation,
   setAutomationEnabled,
   deleteAutomation,
+  getJobPreferences,
+  saveJobPreferences,
 } from "../lib/api";
 
 function CloseIcon() {
@@ -55,6 +57,15 @@ function LockIcon() {
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="4" y="10" width="16" height="10" rx="2" />
       <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+    </svg>
+  );
+}
+
+function BriefcaseIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="7" width="20" height="14" rx="2" />
+      <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16M2 13h20" />
     </svg>
   );
 }
@@ -213,6 +224,65 @@ export default function SettingsModal({
     }
   }
 
+  // --- Job search preferences state --------------------------------------
+  const JOB_DEFAULTS = {
+    role: "",
+    location: "",
+    country: "in",
+    max_days_old: 3,
+    results_per_page: 15,
+    min_salary: "",
+    job_type: "any",
+    remote_only: false,
+    keywords_exclude: "",
+  };
+  const [jobPrefs, setJobPrefs] = useState(JOB_DEFAULTS);
+  const [jobPrefsLoaded, setJobPrefsLoaded] = useState(false);
+  const [jobPrefsSaving, setJobPrefsSaving] = useState(false);
+  const [jobPrefsError, setJobPrefsError] = useState("");
+  const [jobPrefsSavedNote, setJobPrefsSavedNote] = useState("");
+
+  useEffect(() => {
+    if (!open || tab !== "jobs") return;
+    setJobPrefsError("");
+    setJobPrefsSavedNote("");
+    getToken()
+      .then((token) => getJobPreferences(token))
+      .then((data) => {
+        if (data.configured) {
+          setJobPrefs({
+            role: data.role || "",
+            location: data.location || "",
+            country: data.country || "in",
+            max_days_old: data.max_days_old ?? 3,
+            results_per_page: data.results_per_page ?? 15,
+            min_salary: data.min_salary ?? "",
+            job_type: data.job_type || "any",
+            remote_only: !!data.remote_only,
+            keywords_exclude: data.keywords_exclude || "",
+          });
+        }
+        setJobPrefsLoaded(true);
+      })
+      .catch(() => setJobPrefsError("Could not load job preferences."));
+  }, [open, getToken, tab]);
+
+  async function handleSaveJobPrefs(e) {
+    e.preventDefault();
+    setJobPrefsSaving(true);
+    setJobPrefsError("");
+    setJobPrefsSavedNote("");
+    try {
+      const token = await getToken();
+      await saveJobPreferences(token, jobPrefs);
+      setJobPrefsSavedNote("Job preferences saved. Just ask in chat — e.g. \"show me jobs from the last 2 days\".");
+    } catch (err) {
+      setJobPrefsError(err.message || "Could not save job preferences.");
+    } finally {
+      setJobPrefsSaving(false);
+    }
+  }
+
   useEffect(() => {
     setCustomHex(accentColor);
   }, [accentColor, open]);
@@ -289,6 +359,7 @@ export default function SettingsModal({
             { id: "background", label: "Chat background" },
             { id: "email", label: "Email" },
             { id: "automate", label: "Automate" },
+            { id: "jobs", label: "Job Search" },
           ].map((t) => (
             <button
               key={t.id}
@@ -706,6 +777,167 @@ export default function SettingsModal({
                   ))}
                 </ul>
               </div>
+            </div>
+          )}
+
+          {tab === "jobs" && (
+            <div>
+              <p className="mb-3 flex items-start gap-2 text-[13px] text-[var(--text-muted)]">
+                <span className="mt-0.5 text-[var(--text-faint)]"><BriefcaseIcon /></span>
+                Save what you're looking for once, then just ask in chat — "show me jobs from the last 2 days"
+                or "any new backend roles" — and Nova pulls matching listings using these preferences.
+              </p>
+
+              {!jobPrefsLoaded && !jobPrefsError && (
+                <p className="text-[13px] text-[var(--text-muted)]">Loading…</p>
+              )}
+
+              {(jobPrefsLoaded || jobPrefsError) && (
+                <form onSubmit={handleSaveJobPrefs} className="space-y-3">
+                  <div>
+                    <label className="mb-1 block text-[12px] font-medium text-[var(--text-primary)]">
+                      Role / keywords
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={jobPrefs.role}
+                      onChange={(e) => setJobPrefs((f) => ({ ...f, role: e.target.value }))}
+                      placeholder="e.g. Backend Developer"
+                      className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                    />
+                  </div>
+
+                  <div className="flex gap-3">
+                    <div className="flex-1">
+                      <label className="mb-1 block text-[12px] font-medium text-[var(--text-primary)]">
+                        Location
+                      </label>
+                      <input
+                        type="text"
+                        disabled={jobPrefs.remote_only}
+                        value={jobPrefs.location}
+                        onChange={(e) => setJobPrefs((f) => ({ ...f, location: e.target.value }))}
+                        placeholder="e.g. Bangalore"
+                        className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] disabled:opacity-50"
+                      />
+                    </div>
+                    <div className="w-24">
+                      <label className="mb-1 block text-[12px] font-medium text-[var(--text-primary)]">
+                        Country
+                      </label>
+                      <input
+                        type="text"
+                        value={jobPrefs.country}
+                        onChange={(e) => setJobPrefs((f) => ({ ...f, country: e.target.value.toLowerCase() }))}
+                        placeholder="in"
+                        maxLength={2}
+                        className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                      />
+                    </div>
+                  </div>
+
+                  <label className="flex items-center gap-2 text-[13px] text-[var(--text-primary)]">
+                    <input
+                      type="checkbox"
+                      checked={jobPrefs.remote_only}
+                      onChange={(e) => setJobPrefs((f) => ({ ...f, remote_only: e.target.checked }))}
+                      className="h-3.5 w-3.5 accent-[var(--accent)]"
+                    />
+                    Remote only
+                  </label>
+
+                  <div className="flex gap-3">
+                    <div className="flex-1">
+                      <label className="mb-1 block text-[12px] font-medium text-[var(--text-primary)]">
+                        Job type
+                      </label>
+                      <select
+                        value={jobPrefs.job_type}
+                        onChange={(e) => setJobPrefs((f) => ({ ...f, job_type: e.target.value }))}
+                        className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                      >
+                        <option value="any">Any</option>
+                        <option value="full_time">Full-time</option>
+                        <option value="part_time">Part-time</option>
+                        <option value="contract">Contract</option>
+                        <option value="permanent">Permanent</option>
+                      </select>
+                    </div>
+                    <div className="flex-1">
+                      <label className="mb-1 block text-[12px] font-medium text-[var(--text-primary)]">
+                        Min. salary
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={jobPrefs.min_salary}
+                        onChange={(e) => setJobPrefs((f) => ({ ...f, min_salary: e.target.value }))}
+                        placeholder="Optional"
+                        className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex gap-3">
+                    <div className="flex-1">
+                      <label className="mb-1 block text-[12px] font-medium text-[var(--text-primary)]">
+                        Default day range
+                      </label>
+                      <select
+                        value={jobPrefs.max_days_old}
+                        onChange={(e) => setJobPrefs((f) => ({ ...f, max_days_old: Number(e.target.value) }))}
+                        className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                      >
+                        <option value={1}>Last 24 hours</option>
+                        <option value={2}>Last 2 days</option>
+                        <option value={3}>Last 3 days</option>
+                        <option value={7}>Last week</option>
+                        <option value={14}>Last 2 weeks</option>
+                      </select>
+                    </div>
+                    <div className="flex-1">
+                      <label className="mb-1 block text-[12px] font-medium text-[var(--text-primary)]">
+                        Results per search
+                      </label>
+                      <select
+                        value={jobPrefs.results_per_page}
+                        onChange={(e) => setJobPrefs((f) => ({ ...f, results_per_page: Number(e.target.value) }))}
+                        className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                      >
+                        <option value={10}>10</option>
+                        <option value={15}>15</option>
+                        <option value={25}>25</option>
+                        <option value={50}>50</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-[12px] font-medium text-[var(--text-primary)]">
+                      Exclude keywords
+                    </label>
+                    <input
+                      type="text"
+                      value={jobPrefs.keywords_exclude}
+                      onChange={(e) => setJobPrefs((f) => ({ ...f, keywords_exclude: e.target.value }))}
+                      placeholder="e.g. senior, internship"
+                      className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                    />
+                  </div>
+
+                  {jobPrefsError && <p className="text-[12px] text-[var(--danger)]">{jobPrefsError}</p>}
+                  {jobPrefsSavedNote && <p className="text-[12px] text-[var(--accent-soft-text)]">{jobPrefsSavedNote}</p>}
+
+                  <button
+                    type="submit"
+                    disabled={jobPrefsSaving}
+                    className="w-full rounded-lg bg-[var(--accent)] px-3 py-2 text-[13px] font-medium text-[var(--accent-contrast)] transition-colors hover:bg-[var(--accent-hover)] disabled:opacity-50"
+                  >
+                    {jobPrefsSaving ? "Saving…" : "Save job preferences"}
+                  </button>
+                </form>
+              )}
             </div>
           )}
         </div>

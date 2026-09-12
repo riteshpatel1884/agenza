@@ -237,6 +237,14 @@ export default function Home() {
           return updated;
         });
       },
+      onJobs: (jobs, count) => {
+        setMessages((prev) => {
+          const updated = [...prev];
+          const last = updated[updated.length - 1];
+          updated[updated.length - 1] = { ...last, jobs, jobsCount: count };
+          return updated;
+        });
+      },
       onError: (err) => setErrorMsg(err),
       onDone: () => {
         setIsStreaming(false);
@@ -334,7 +342,14 @@ export default function Home() {
           ) : (
             <div className="py-4">
               {messages.map((m, i) => (
-                <ChatMessage key={i} role={m.role} content={m.content} onBusyBackground={hasCustomBackground} />
+                <ChatMessage
+                  key={i}
+                  role={m.role}
+                  content={m.content}
+                  jobs={m.jobs}
+                  jobsCount={m.jobsCount}
+                  onBusyBackground={hasCustomBackground}
+                />
               ))}
               <div ref={bottomRef} />
             </div>

@@ -1,3 +1,4 @@
+import json
 import os
 import re
 from pathlib import Path
@@ -21,6 +22,7 @@ from langgraph.checkpoint.postgres import PostgresSaver
 from psycopg_pool import ConnectionPool
 
 from email_utils import send_smtp_email
+from jobs import search_adzuna_jobs, JobSearchError
 
 Path("data").mkdir(exist_ok=True)
 
@@ -219,7 +221,95 @@ def send_email(
     return message
 
 
-TOOLS = [send_email]
+# ---------------------------------------------------------------------------
+# Job search tool — lets the agent pull live job listings from Adzuna,
+# scoped to whatever the signed-in user saved in Settings -> Job Search.
+#
+# Per-user preferences (role, location, day range, min salary, etc.) are
+# threaded in via the run config, same as the SMTP settings above, so the
+# model doesn't need the user to restate them in the chat. The tool result
+# is a JSON string; app.py detects it by tool name and forwards it to the
+# frontend as a dedicated "jobs" SSE event so it renders as job cards
+# instead of being retyped by the model as plain text.
+# ---------------------------------------------------------------------------
+
+ADZUNA_APP_ID = os.getenv("ADZUNA_APP_ID")
+ADZUNA_APP_KEY = os.getenv("ADZUNA_APP_KEY")
+
+
+@tool
+def search_jobs(
+    role: str | None = None,
+    location: str | None = None,
+    max_days_old: int | None = None,
+    config: Annotated[RunnableConfig, InjectedToolArg] = None,
+) -> str:
+    """Search for current job listings and return them to the user.
+
+    Call this whenever the user asks to see, find, or check jobs/openings —
+    e.g. "show me jobs", "find backend developer roles", "anything new in
+    the last 2 days", "jobs for today". The user's saved Job Search
+    preferences (role, location, country, day range, salary floor, job
+    type, excluded keywords) are applied automatically — you do NOT need to
+    ask the user for these before calling the tool. Only pass `role`,
+    `location`, or `max_days_old` yourself if the user's message explicitly
+    names a different role, place, or day range than what they'd normally
+    have saved; otherwise leave them as None and the saved preferences are
+    used as-is.
+
+    The tool returns a JSON string. The listings themselves are already
+    shown to the user as cards in the UI — do not re-list or re-describe
+    each job in your reply. Just give a short one-line summary (how many
+    were found, anything notable), and only go into detail on a specific
+    job if the user asks a follow-up question about it.
+
+    Args:
+        role: Optional override for the job title/keywords to search.
+        location: Optional override for the city/region ("Remote" is fine).
+        max_days_old: Optional override for how many days back to search.
+    """
+    prefs = ((config or {}).get("configurable") or {}).get("job_preferences") or {}
+
+    effective_role = (role or prefs.get("role") or "").strip()
+    if not effective_role:
+        return (
+            "No role to search for. Ask the user to either tell you what "
+            "role/keywords to search, or save a role in Settings -> Job Search."
+        )
+
+    effective_location = (location if location is not None else prefs.get("location")) or ""
+    if prefs.get("remote_only") and not effective_location:
+        effective_location = "Remote"
+
+    effective_days = max_days_old or prefs.get("max_days_old") or 3
+    job_type = prefs.get("job_type") if prefs.get("job_type") not in (None, "any") else None
+
+    try:
+        jobs, total_count = search_adzuna_jobs(
+            app_id=ADZUNA_APP_ID,
+            app_key=ADZUNA_APP_KEY,
+            what=effective_role,
+            where=effective_location,
+            country=prefs.get("country") or "in",
+            results_per_page=prefs.get("results_per_page") or 15,
+            max_days_old=effective_days,
+            min_salary=prefs.get("min_salary"),
+            job_type=job_type,
+            what_exclude=prefs.get("keywords_exclude"),
+        )
+    except JobSearchError as e:
+        return str(e)
+
+    return json.dumps(
+        {
+            "jobs": jobs,
+            "count": total_count,
+            "query": {"role": effective_role, "location": effective_location, "max_days_old": effective_days},
+        }
+    )
+
+
+TOOLS = [send_email, search_jobs]
 
 
 SYSTEM_PROMPT = """
@@ -233,6 +323,13 @@ Always use the exact recipient, subject, and content the user gave you.
 After sending, briefly confirm what you sent and to whom. If the tool
 reports that email isn't connected, tell the user to add their email in
 Settings -> Email.
+
+You also have a search_jobs tool. When the user asks to see, find, or
+check jobs/openings, call it directly — their saved Job Search preferences
+are applied automatically, so don't ask them to repeat their role or
+location first unless the tool tells you none is saved. The job listings
+themselves are rendered to the user separately as cards, so keep your
+reply to a short one-line summary rather than listing the jobs yourself.
 """
 
 

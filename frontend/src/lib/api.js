@@ -157,6 +157,36 @@ export async function deleteAutomation(token, automationId) {
 }
 
 /**
+ * Fetches the signed-in user's saved job-search preferences.
+ * Returns { configured: false } if nothing has been saved yet.
+ */
+export async function getJobPreferences(token) {
+  const res = await fetch(`${API_BASE}/job-preferences`, {
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error("Failed to load job preferences");
+  return res.json();
+}
+
+/**
+ * Saves (or updates) the signed-in user's job-search preferences.
+ * body: { role, location?, country?, max_days_old?, results_per_page?,
+ *         min_salary?, job_type?, remote_only?, keywords_exclude? }
+ */
+export async function saveJobPreferences(token, preferences) {
+  const res = await fetch(`${API_BASE}/job-preferences`, {
+    method: "POST",
+    headers: authHeaders(token, { "Content-Type": "application/json" }),
+    body: JSON.stringify(preferences),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to save job preferences");
+  }
+  return res.json();
+}
+
+/**
  * Streams a chat response from the backend.
  *
  * The backend sends Server-Sent-Events-style chunks ("data: {...}\n\n") but
@@ -164,7 +194,7 @@ export async function deleteAutomation(token, automationId) {
  * Instead we read the raw response stream and parse the "data:" frames
  * ourselves.
  */
-export async function streamChat({ token, message, threadId, model, onToken, onDone, onError }) {
+export async function streamChat({ token, message, threadId, model, onToken, onDone, onError, onJobs }) {
   try {
     const res = await fetch(`${API_BASE}/chat/stream`, {
       method: "POST",
@@ -204,6 +234,7 @@ export async function streamChat({ token, message, threadId, model, onToken, onD
         }
 
         if (payload.token) onToken(payload.token);
+        if (payload.jobs) onJobs?.(payload.jobs, payload.count);
         if (payload.error) onError?.(payload.error);
         if (payload.done) onDone?.();
       }

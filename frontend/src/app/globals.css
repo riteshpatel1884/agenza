@@ -1,0 +1,64 @@
+@import "tailwindcss";
+/* Add this block to your existing app/globals.css (keep your Tailwind @import/@tailwind lines as-is) */
+
+:root {
+  --bg-canvas: #fafaf7;
+  --bg-elevated: #ffffff;
+  --bg-hover: rgba(20, 20, 26, 0.05);
+  --border: #e6e3da;
+  --border-soft: #edebe3;
+  --text-primary: #1a1b1f;
+  --text-muted: #6b6d76;
+  --text-faint: #9a9ca6;
+  --accent: #14b8a6;
+  --accent-hover: #0f6b5c;
+  --accent-soft: #eaf3f1;
+  --accent-soft-text: #0f6b5c;
+  --accent-contrast: #ffffff;
+  --danger: #b3261e;
+  --shadow-elevated: 0 2px 10px rgba(20, 20, 26, 0.04);
+  --shadow-dropdown: 0 4px 16px rgba(20, 20, 26, 0.08);
+}
+
+[data-theme="dark"] {
+  --bg-canvas: #1b1c22;
+  --bg-elevated: #24262e;
+  --bg-hover: rgba(255, 255, 255, 0.05);
+  --border: #33353d;
+  --border-soft: #2a2c33;
+  --text-primary: #ecedf2;
+  --text-muted: #9a9ca6;
+  --text-faint: #6b6d76;
+  --accent: #2dd4bf;
+  --accent-hover: #5eead4;
+  --accent-soft: #123832;
+  --accent-soft-text: #5eead4;
+  --accent-contrast: #0b0c10;
+  --danger: #f2a6a0;
+  --shadow-elevated: 0 2px 10px rgba(0, 0, 0, 0.3);
+  --shadow-dropdown: 0 4px 20px rgba(0, 0, 0, 0.45);
+}
+
+/* Scrollbar for the light/dark-aware main canvas */
+.scroll-theme::-webkit-scrollbar {
+  width: 8px;
+}
+.scroll-theme::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px;
+}
+.scroll-theme::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Scrollbar for the sidebar, which stays ink-dark in both themes */
+.scroll-dark::-webkit-scrollbar {
+  width: 6px;
+}
+.scroll-dark::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+}
+.scroll-dark::-webkit-scrollbar-track {
+  background: transparent;
+}

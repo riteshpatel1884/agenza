@@ -138,13 +138,8 @@ export default function Sidebar({
       >
         <div className="flex items-center justify-between gap-2 px-4 pt-5 pb-4">
           <div className="flex items-center gap-2">
-            <div
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[13px] font-semibold"
-              style={{ backgroundColor: "var(--accent)", color: "var(--accent-contrast)" }}
-            >
-              N
-            </div>
-            <span className="text-[14px] font-medium tracking-tight text-[#ECEDF2]">Nova</span>
+            
+            <span className="text-[14px] font-medium tracking-tight text-[#ECEDF2]">agenza.ai</span>
           </div>
           <div className="flex items-center gap-1">
             <button

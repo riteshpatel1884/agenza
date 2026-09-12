@@ -1,0 +1,4 @@
+How to create uv environment: 
+1. pip install uv
+2. uv venv
+3. run the script to activate

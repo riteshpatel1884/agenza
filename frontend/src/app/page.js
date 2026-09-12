@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useAuth } from "@clerk/nextjs";
 import Sidebar from "../components/Sidebar";
 import ModelSelector from "../components/ModelSelector";
 import ChatMessage from "../components/ChatMessage";
@@ -14,7 +15,7 @@ import {
   streamChat,
   renameConversation,
   deleteConversation,
-} from "./lib/api";
+} from "../lib/api";
 import {
   applyAccentColor,
   loadAccentColor,
@@ -23,7 +24,7 @@ import {
   saveChatBackground,
   backgroundToStyle,
   SIDEBAR_STORAGE_KEY,
-} from "./lib/theme";
+} from "../lib/theme";
 
 const SUGGESTIONS = [
   "Summarize this document in three bullet points",
@@ -75,6 +76,13 @@ function PanelIcon() {
 }
 
 export default function Home() {
+  // isLoaded: Clerk has finished checking the session. isSignedIn should
+  // always be true here in practice — middleware.js already redirects
+  // signed-out visitors to /sign-in before this page ever renders — but we
+  // still guard on isLoaded so we don't fire API calls with a null token
+  // during that first instant.
+  const { getToken, isLoaded, isSignedIn } = useAuth();
+
   const [models, setModels] = useState([]);
   const [selectedModel, setSelectedModel] = useState("");
   const [conversations, setConversations] = useState([]);
@@ -98,6 +106,8 @@ export default function Home() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   useEffect(() => {
+    if (!isLoaded || !isSignedIn) return;
+
     fetchModels()
       .then((data) => {
         setModels(data.models || []);
@@ -112,7 +122,8 @@ export default function Home() {
     setChatBackground(loadChatBackground());
     const savedCollapsed = localStorage.getItem(SIDEBAR_STORAGE_KEY);
     if (savedCollapsed) setSidebarCollapsed(savedCollapsed === "true");
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoaded, isSignedIn]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -151,10 +162,14 @@ export default function Home() {
     });
   }
 
-  function refreshConversations() {
-    fetchConversations()
-      .then((data) => setConversations(data.conversations || []))
-      .catch(() => {});
+  async function refreshConversations() {
+    try {
+      const token = await getToken();
+      const data = await fetchConversations(token);
+      setConversations(data.conversations || []);
+    } catch {
+      // Non-fatal — the sidebar just stays empty/stale until the next refresh.
+    }
   }
 
   function handleNewChat() {
@@ -167,7 +182,8 @@ export default function Home() {
     setThreadId(id);
     setErrorMsg("");
     try {
-      const data = await fetchHistory(id);
+      const token = await getToken();
+      const data = await fetchHistory(token, id);
       setMessages(data.messages || []);
     } catch {
       setErrorMsg("Could not load that conversation.");
@@ -178,7 +194,8 @@ export default function Home() {
     const previous = conversations;
     setConversations((prev) => prev.map((c) => (c.thread_id === id ? { ...c, title } : c)));
     try {
-      await renameConversation(id, title);
+      const token = await getToken();
+      await renameConversation(token, id, title);
     } catch {
       setConversations(previous);
       setErrorMsg("Could not rename that conversation.");
@@ -189,7 +206,8 @@ export default function Home() {
     const previous = conversations;
     setConversations((prev) => prev.filter((c) => c.thread_id !== id));
     try {
-      await deleteConversation(id);
+      const token = await getToken();
+      await deleteConversation(token, id);
       if (id === threadId) {
         handleNewChat();
       }
@@ -204,7 +222,10 @@ export default function Home() {
     setMessages((prev) => [...prev, { role: "user", content: text }, { role: "assistant", content: "" }]);
     setIsStreaming(true);
 
+    const token = await getToken();
+
     await streamChat({
+      token,
       message: text,
       threadId,
       model: selectedModel,
@@ -226,6 +247,12 @@ export default function Home() {
 
   const hasCustomBackground = chatBackground?.type && chatBackground.type !== "none";
   const mainStyle = backgroundToStyle(chatBackground);
+
+  // Middleware already redirects signed-out visitors to /sign-in, so this is
+  // just the brief flash while Clerk confirms the session client-side.
+  if (!isLoaded || !isSignedIn) {
+    return <div className="flex h-screen items-center justify-center bg-[var(--bg-canvas)]" />;
+  }
 
   return (
     <div className="flex h-screen bg-[var(--bg-canvas)] text-[var(--text-primary)]">
@@ -332,6 +359,7 @@ export default function Home() {
         onAccentChange={handleAccentChange}
         chatBackground={chatBackground}
         onBackgroundChange={handleBackgroundChange}
+        getToken={getToken}
       />
     </div>
   );

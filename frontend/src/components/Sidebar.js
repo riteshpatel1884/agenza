@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { UserButton } from "@clerk/nextjs";
 
 function PlusIcon() {
   return (
@@ -283,6 +284,11 @@ export default function Sidebar({
               );
             })}
           </ul>
+        </div>
+
+        <div className="flex items-center gap-2.5 border-t border-white/10 px-4 py-3">
+          <UserButton afterSignOutUrl="/sign-in" />
+          <span className="text-[13px] text-[#9A9CA6]">Account</span>
         </div>
       </aside>
     </>

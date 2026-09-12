@@ -32,3 +32,6 @@ readability
 trafilatura
 streamlit
 pypdf
+
+apscheduler
+langgraph-checkpoint-postgres

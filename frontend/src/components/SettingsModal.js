@@ -6,7 +6,16 @@ import {
   BACKGROUND_PRESETS,
   backgroundToStyle,
   applyAccentColor,
-} from "../app/lib/theme";
+} from "../lib/theme";
+import {
+  getEmailSettings,
+  saveEmailSettings,
+  deleteEmailSettings,
+  listAutomations,
+  createAutomation,
+  setAutomationEnabled,
+  deleteAutomation,
+} from "../lib/api";
 
 function CloseIcon() {
   return (
@@ -32,6 +41,33 @@ function UploadIcon() {
   );
 }
 
+function MailIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="M3 7l9 6 9-6" />
+    </svg>
+  );
+}
+
+function LockIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="4" y="10" width="16" height="10" rx="2" />
+      <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+    </svg>
+  );
+}
+
+function ClockIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 3" />
+    </svg>
+  );
+}
+
 export default function SettingsModal({
   open,
   onClose,
@@ -40,10 +76,142 @@ export default function SettingsModal({
   onAccentChange,
   chatBackground,
   onBackgroundChange,
+  getToken,
 }) {
   const [customHex, setCustomHex] = useState(accentColor);
   const [tab, setTab] = useState("accent");
   const fileInputRef = useRef(null);
+
+  // --- Email settings state -------------------------------------------
+  const [emailStatus, setEmailStatus] = useState(null); // null = loading
+  const [emailForm, setEmailForm] = useState({
+    smtp_host: "",
+    smtp_port: "587",
+    smtp_user: "",
+    smtp_password: "",
+    smtp_from_name: "",
+  });
+  const [emailSaving, setEmailSaving] = useState(false);
+  const [emailError, setEmailError] = useState("");
+  const [emailSavedNote, setEmailSavedNote] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    setEmailError("");
+    setEmailSavedNote("");
+    getToken()
+      .then((token) => getEmailSettings(token))
+      .then((data) => {
+        setEmailStatus(data);
+        if (data.configured) {
+          setEmailForm({
+            smtp_host: data.smtp_host || "",
+            smtp_port: String(data.smtp_port || "587"),
+            smtp_user: data.smtp_user || "",
+            smtp_password: "",
+            smtp_from_name: data.smtp_from_name || "",
+          });
+        }
+      })
+      .catch(() => setEmailError("Could not load email settings."));
+  }, [open, getToken]);
+
+  async function handleSaveEmail(e) {
+    e.preventDefault();
+    setEmailSaving(true);
+    setEmailError("");
+    setEmailSavedNote("");
+    try {
+      const token = await getToken();
+      await saveEmailSettings(token, emailForm);
+      const refreshed = await getEmailSettings(token);
+      setEmailStatus(refreshed);
+      setEmailForm((f) => ({ ...f, smtp_password: "" }));
+      setEmailSavedNote("Email connected.");
+    } catch (err) {
+      setEmailError(err.message || "Could not save email settings.");
+    } finally {
+      setEmailSaving(false);
+    }
+  }
+
+  async function handleDisconnectEmail() {
+    setEmailSaving(true);
+    setEmailError("");
+    try {
+      const token = await getToken();
+      await deleteEmailSettings(token);
+      setEmailStatus({ configured: false });
+      setEmailForm({ smtp_host: "", smtp_port: "587", smtp_user: "", smtp_password: "", smtp_from_name: "" });
+      setEmailSavedNote("");
+    } catch {
+      setEmailError("Could not disconnect email.");
+    } finally {
+      setEmailSaving(false);
+    }
+  }
+
+  // --- Automation state --------------------------------------------------
+  const [automations, setAutomations] = useState(null); // null = loading
+  const [automationForm, setAutomationForm] = useState({
+    to_email: "",
+    subject: "",
+    body: "",
+    frequency: "daily",
+    time_of_day: "09:00",
+  });
+  const [automationSaving, setAutomationSaving] = useState(false);
+  const [automationError, setAutomationError] = useState("");
+
+  useEffect(() => {
+    if (!open || tab !== "automate") return;
+    getToken()
+      .then((token) => listAutomations(token))
+      .then((data) => setAutomations(data.automations || []))
+      .catch(() => setAutomationError("Could not load automations."));
+  }, [open, getToken, tab]);
+
+  async function handleCreateAutomation(e) {
+    e.preventDefault();
+    setAutomationSaving(true);
+    setAutomationError("");
+    try {
+      const payload = { ...automationForm };
+      if (payload.frequency === "hourly") delete payload.time_of_day;
+      const token = await getToken();
+      const created = await createAutomation(token, payload);
+      setAutomations((prev) => [created, ...(prev || [])]);
+      setAutomationForm({ to_email: "", subject: "", body: "", frequency: "daily", time_of_day: "09:00" });
+    } catch (err) {
+      setAutomationError(err.message || "Could not create automation.");
+    } finally {
+      setAutomationSaving(false);
+    }
+  }
+
+  async function handleToggleAutomation(automation) {
+    const nextEnabled = !automation.enabled;
+    setAutomations((prev) => prev.map((a) => (a.id === automation.id ? { ...a, enabled: nextEnabled } : a)));
+    try {
+      const token = await getToken();
+      await setAutomationEnabled(token, automation.id, nextEnabled);
+    } catch {
+      setAutomations((prev) => prev.map((a) => (a.id === automation.id ? { ...a, enabled: automation.enabled } : a)));
+      setAutomationError("Could not update that automation.");
+    }
+  }
+
+  async function handleDeleteAutomation(automationId) {
+    const previous = automations;
+    setAutomations((prev) => prev.filter((a) => a.id !== automationId));
+    try {
+      const token = await getToken();
+      await deleteAutomation(token, automationId);
+    } catch {
+      setAutomations(previous);
+      setAutomationError("Could not delete that automation.");
+    }
+  }
 
   useEffect(() => {
     setCustomHex(accentColor);
@@ -119,6 +287,8 @@ export default function SettingsModal({
           {[
             { id: "accent", label: "Accent color" },
             { id: "background", label: "Chat background" },
+            { id: "email", label: "Email" },
+            { id: "automate", label: "Automate" },
           ].map((t) => (
             <button
               key={t.id}
@@ -276,6 +446,266 @@ export default function SettingsModal({
                   </button>
                 </div>
               )}
+            </div>
+          )}
+
+          {tab === "email" && (
+            <div>
+              <p className="mb-3 text-[13px] text-[var(--text-muted)]">
+                Connect an inbox so the assistant can send emails for you when you ask it to.
+              </p>
+
+              <div className="mb-4 flex items-start gap-2.5 rounded-lg border border-[var(--border-soft)] bg-[var(--bg-canvas)] px-3 py-2.5">
+                <span className="mt-0.5 text-[var(--text-muted)]"><LockIcon /></span>
+                <p className="text-[12px] leading-5 text-[var(--text-muted)]">
+                  Your credentials are stored only in this app's own database, on this server —
+                  they're never sent to the AI model or shared with any third party.
+                </p>
+              </div>
+
+              {emailStatus === null && (
+                <p className="text-[13px] text-[var(--text-muted)]">Loading…</p>
+              )}
+
+              {emailStatus?.configured && (
+                <div className="mb-4 flex items-center gap-2.5 rounded-lg border border-[var(--border-soft)] bg-[var(--accent-soft)] px-3 py-2.5">
+                  <span className="text-[var(--accent-soft-text)]"><MailIcon /></span>
+                  <span className="flex-1 text-[13px] text-[var(--accent-soft-text)]">
+                    Connected as {emailStatus.smtp_user}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleDisconnectEmail}
+                    disabled={emailSaving}
+                    className="text-[12px] font-medium text-[var(--danger)] hover:underline disabled:opacity-50"
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              )}
+
+              {emailStatus !== null && (
+                <form onSubmit={handleSaveEmail} className="space-y-3">
+                  <div>
+                    <label className="mb-1 block text-[12px] font-medium text-[var(--text-primary)]">SMTP host</label>
+                    <input
+                      type="text"
+                      required
+                      value={emailForm.smtp_host}
+                      onChange={(e) => setEmailForm((f) => ({ ...f, smtp_host: e.target.value }))}
+                      placeholder="smtp.gmail.com"
+                      className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                    />
+                  </div>
+
+                  <div className="flex gap-3">
+                    <div className="w-24 shrink-0">
+                      <label className="mb-1 block text-[12px] font-medium text-[var(--text-primary)]">Port</label>
+                      <input
+                        type="number"
+                        required
+                        value={emailForm.smtp_port}
+                        onChange={(e) => setEmailForm((f) => ({ ...f, smtp_port: e.target.value }))}
+                        className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <label className="mb-1 block text-[12px] font-medium text-[var(--text-primary)]">From name</label>
+                      <input
+                        type="text"
+                        value={emailForm.smtp_from_name}
+                        onChange={(e) => setEmailForm((f) => ({ ...f, smtp_from_name: e.target.value }))}
+                        placeholder="agenza.ai"
+                        className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-[12px] font-medium text-[var(--text-primary)]">Email address</label>
+                    <input
+                      type="email"
+                      required
+                      value={emailForm.smtp_user}
+                      onChange={(e) => setEmailForm((f) => ({ ...f, smtp_user: e.target.value }))}
+                      placeholder="you@gmail.com"
+                      className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-[12px] font-medium text-[var(--text-primary)]">
+                      {emailStatus.configured ? "New password (leave blank to keep current)" : "App password"}
+                    </label>
+                    <input
+                      type="password"
+                      required={!emailStatus.configured}
+                      value={emailForm.smtp_password}
+                      onChange={(e) => setEmailForm((f) => ({ ...f, smtp_password: e.target.value }))}
+                      placeholder="••••••••••••••••"
+                      autoComplete="new-password"
+                      className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                    />
+                    <p className="mt-1 text-[11px] text-[var(--text-faint)]">
+                      For Gmail, use a 16-character app password, not your regular password.
+                    </p>
+                  </div>
+
+                  {emailError && <p className="text-[12px] text-[var(--danger)]">{emailError}</p>}
+                  {emailSavedNote && <p className="text-[12px] text-[var(--accent-soft-text)]">{emailSavedNote}</p>}
+
+                  <button
+                    type="submit"
+                    disabled={emailSaving}
+                    className="w-full rounded-lg bg-[var(--accent)] px-3 py-2 text-[13px] font-medium text-[var(--accent-contrast)] transition-colors hover:bg-[var(--accent-hover)] disabled:opacity-50"
+                  >
+                    {emailSaving ? "Saving…" : emailStatus.configured ? "Update email settings" : "Connect email"}
+                  </button>
+                </form>
+              )}
+            </div>
+          )}
+
+          {tab === "automate" && (
+            <div>
+              <p className="mb-3 text-[13px] text-[var(--text-muted)]">
+                Set up an email that sends itself on a schedule — every hour, or once a day at a set time.
+              </p>
+
+              {!emailStatus?.configured && (
+                <p className="mb-4 rounded-lg border border-[var(--border-soft)] bg-[var(--bg-canvas)] px-3 py-2.5 text-[12px] text-[var(--text-muted)]">
+                  Connect your email in the Email tab first — automations need somewhere to send from.
+                </p>
+              )}
+
+              <form onSubmit={handleCreateAutomation} className="space-y-3">
+                <div>
+                  <label className="mb-1 block text-[12px] font-medium text-[var(--text-primary)]">To</label>
+                  <input
+                    type="email"
+                    required
+                    disabled={!emailStatus?.configured}
+                    value={automationForm.to_email}
+                    onChange={(e) => setAutomationForm((f) => ({ ...f, to_email: e.target.value }))}
+                    placeholder="someone@example.com"
+                    className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] disabled:opacity-50"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-[12px] font-medium text-[var(--text-primary)]">Subject</label>
+                  <input
+                    type="text"
+                    required
+                    disabled={!emailStatus?.configured}
+                    value={automationForm.subject}
+                    onChange={(e) => setAutomationForm((f) => ({ ...f, subject: e.target.value }))}
+                    className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] disabled:opacity-50"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-[12px] font-medium text-[var(--text-primary)]">Body</label>
+                  <textarea
+                    required
+                    rows={3}
+                    disabled={!emailStatus?.configured}
+                    value={automationForm.body}
+                    onChange={(e) => setAutomationForm((f) => ({ ...f, body: e.target.value }))}
+                    className="w-full resize-none rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] disabled:opacity-50"
+                  />
+                </div>
+
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <label className="mb-1 block text-[12px] font-medium text-[var(--text-primary)]">Frequency</label>
+                    <select
+                      disabled={!emailStatus?.configured}
+                      value={automationForm.frequency}
+                      onChange={(e) => setAutomationForm((f) => ({ ...f, frequency: e.target.value }))}
+                      className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] disabled:opacity-50"
+                    >
+                      <option value="hourly">Every hour</option>
+                      <option value="daily">Once a day</option>
+                    </select>
+                  </div>
+                  {automationForm.frequency === "daily" && (
+                    <div className="w-32">
+                      <label className="mb-1 block text-[12px] font-medium text-[var(--text-primary)]">Time</label>
+                      <input
+                        type="time"
+                        disabled={!emailStatus?.configured}
+                        value={automationForm.time_of_day}
+                        onChange={(e) => setAutomationForm((f) => ({ ...f, time_of_day: e.target.value }))}
+                        className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] disabled:opacity-50"
+                      />
+                    </div>
+                  )}
+                </div>
+                <p className="text-[11px] text-[var(--text-faint)]">
+                  Times run on the server's clock, not your device's local time zone.
+                </p>
+
+                {automationError && <p className="text-[12px] text-[var(--danger)]">{automationError}</p>}
+
+                <button
+                  type="submit"
+                  disabled={automationSaving || !emailStatus?.configured}
+                  className="w-full rounded-lg bg-[var(--accent)] px-3 py-2 text-[13px] font-medium text-[var(--accent-contrast)] transition-colors hover:bg-[var(--accent-hover)] disabled:opacity-50"
+                >
+                  {automationSaving ? "Creating…" : "Create automation"}
+                </button>
+              </form>
+
+              <div className="mt-5 border-t border-[var(--border-soft)] pt-4">
+                <p className="mb-2.5 text-[12px] font-medium text-[var(--text-muted)]">Active automations</p>
+
+                {automations === null && (
+                  <p className="text-[13px] text-[var(--text-muted)]">Loading…</p>
+                )}
+                {automations?.length === 0 && (
+                  <p className="text-[13px] text-[var(--text-muted)]">No automations yet.</p>
+                )}
+
+                <ul className="space-y-2">
+                  {automations?.map((a) => (
+                    <li key={a.id} className="rounded-lg border border-[var(--border-soft)] px-3 py-2.5">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-[13px] font-medium text-[var(--text-primary)]">{a.subject}</p>
+                          <p className="truncate text-[12px] text-[var(--text-muted)]">To {a.to_email}</p>
+                          <p className="mt-0.5 flex items-center gap-1 text-[11px] text-[var(--text-faint)]">
+                            <ClockIcon />
+                            {a.frequency === "hourly" ? "Every hour" : `Daily at ${a.time_of_day}`}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleAutomation(a)}
+                            title={a.enabled ? "Pause" : "Resume"}
+                            className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${
+                              a.enabled
+                                ? "bg-[var(--accent-soft)] text-[var(--accent-soft-text)]"
+                                : "bg-[var(--bg-hover)] text-[var(--text-muted)]"
+                            }`}
+                          >
+                            {a.enabled ? "On" : "Off"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteAutomation(a.id)}
+                            title="Delete"
+                            className="text-[11px] font-medium text-[var(--danger)] hover:underline"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
           )}
         </div>

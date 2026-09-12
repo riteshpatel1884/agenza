@@ -1,6 +1,5 @@
 import os
 import re
-import sqlite3
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -11,11 +10,46 @@ load_dotenv()
 os.environ["SSL_CERT_FILE"] = certifi.where()
 os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 
+from typing import Annotated
+
 from langchain_core.messages import SystemMessage
+from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import tool, InjectedToolArg
 from langgraph.graph import StateGraph, START, MessagesState
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.checkpoint.postgres import PostgresSaver
+from psycopg_pool import ConnectionPool
+
+from email_utils import send_smtp_email
 
 Path("data").mkdir(exist_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Conversation memory now lives in the same Neon Postgres database as
+# everything else (see database.py), via LangGraph's Postgres checkpointer.
+# A single connection pool is shared by every model's compiled graph.
+# ---------------------------------------------------------------------------
+
+_RAW_DATABASE_URL = os.environ["DATABASE_URL"]  # plain "postgresql://" — psycopg wants no "+driver" suffix
+
+_pool = ConnectionPool(
+    conninfo=_RAW_DATABASE_URL,
+    max_size=10,
+    kwargs={"autocommit": True, "prepare_threshold": 0},
+)
+
+_checkpointer = PostgresSaver(_pool)
+_checkpointer_ready = False
+
+
+def _get_checkpointer():
+    """Create the checkpointer's tables on first use (idempotent), then reuse the same pool-backed instance."""
+    global _checkpointer_ready
+    if not _checkpointer_ready:
+        _checkpointer.setup()
+        _checkpointer_ready = True
+    return _checkpointer
 
 
 # ---------------------------------------------------------------------------
@@ -121,9 +155,84 @@ def list_models():
     ]
 
 
+# ---------------------------------------------------------------------------
+# Email tool — lets the agent send an email on the user's behalf when asked.
+#
+# SMTP credentials come from whoever is chatting, entered through the
+# Settings modal in the UI and stored per-user in the database (see
+# database.py: EmailSettings). They're threaded in per-request via the
+# LangGraph run config rather than hardcoded here, so every user can connect
+# their own inbox instead of sharing one account from a .env file.
+#
+# SMTP_HOST/USER/PASSWORD env vars below are only a fallback for a
+# single-tenant deployment where nobody has entered their own settings yet.
+# ---------------------------------------------------------------------------
+
+SMTP_HOST = os.getenv("SMTP_HOST")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
+SMTP_FROM_NAME = os.getenv("SMTP_FROM_NAME", "agenza.ai")
+
+_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+@tool
+def send_email(
+    to: str,
+    subject: str,
+    body: str,
+    cc: str | None = None,
+    config: Annotated[RunnableConfig, InjectedToolArg] = None,
+) -> str:
+    """Send an email on the user's behalf.
+
+    Use this whenever the user asks you to email, message, or notify someone
+    by email. Send it directly — the user's request IS the confirmation, so
+    don't ask "should I send this?" first. Do make sure the recipient
+    address, subject, and body you pass in match exactly what the user
+    asked for; never invent a recipient or content they didn't give you.
+
+    Args:
+        to: The recipient's email address.
+        subject: The email subject line.
+        body: The plain-text body of the email.
+        cc: Optional comma-separated list of additional recipients to cc.
+    """
+    smtp = ((config or {}).get("configurable") or {}).get("smtp") or {}
+    host = smtp.get("host") or SMTP_HOST
+    port = smtp.get("port") or SMTP_PORT
+    user = smtp.get("user") or SMTP_USER
+    password = smtp.get("password") or SMTP_PASSWORD
+    from_name = smtp.get("from_name") or SMTP_FROM_NAME
+
+    if not host or not user or not password:
+        return (
+            "Email isn't connected yet. Ask the user to add their SMTP "
+            "details in Settings -> Email before you can send on their behalf."
+        )
+
+    if not _EMAIL_PATTERN.match(to.strip()):
+        return f"'{to}' doesn't look like a valid email address — please confirm it with the user."
+
+    ok, message = send_smtp_email(host, port, user, password, from_name, to, subject, body, cc)
+    return message
+
+
+TOOLS = [send_email]
+
+
 SYSTEM_PROMPT = """
-You are a helpful AI assistant. Answer clearly, concisely, and honestly.
+You are a helpful AI assistant with access to tools. Answer clearly, concisely, and honestly.
 If you are not sure about something, say so instead of guessing.
+
+You have a send_email tool. When the user asks you to email, message, or
+notify someone, call it directly instead of just drafting the text — their
+request is the instruction to send it, so don't ask for confirmation first.
+Always use the exact recipient, subject, and content the user gave you.
+After sending, briefly confirm what you sent and to whom. If the tool
+reports that email isn't connected, tell the user to add their email in
+Settings -> Email.
 """
 
 
@@ -164,13 +273,20 @@ def build_llm(model_id: str):
 
 def build_agent(model_id: str):
     """
-    Build a minimal LangGraph app: a single node that calls the selected LLM.
+    Build a LangGraph app: a chatbot node bound to TOOLS (currently just
+    send_email), plus a tools node it can loop through.
 
-    Conversation state is persisted per thread_id via the SQLite checkpointer,
-    so the model keeps context across turns of the same chat. No tools yet —
-    that comes in a later phase (email, calendar, web search, RAG, etc).
+    Flow: chatbot -> (has tool call?) -> tools -> chatbot -> ... -> END.
+    `tools_condition` checks the latest AI message for tool_calls and routes
+    to the "tools" node if present, or ends the turn otherwise. Conversation
+    state is persisted per thread_id via the SQLite checkpointer, so the
+    model keeps context (and knows what it already sent) across turns.
+
+    Per-user data (like SMTP credentials for send_email) is NOT baked in
+    here — it's read from the run's config at call time, so this same
+    compiled graph is reused across every user of a given model.
     """
-    llm = build_llm(model_id)
+    llm = build_llm(model_id).bind_tools(TOOLS)
 
     def chatbot_node(state: MessagesState):
         messages = [SystemMessage(content=SYSTEM_PROMPT)] + state["messages"]
@@ -179,12 +295,12 @@ def build_agent(model_id: str):
 
     workflow = StateGraph(MessagesState)
     workflow.add_node("chatbot", chatbot_node)
+    workflow.add_node("tools", ToolNode(TOOLS))
     workflow.add_edge(START, "chatbot")
+    workflow.add_conditional_edges("chatbot", tools_condition)
+    workflow.add_edge("tools", "chatbot")
 
-    conn = sqlite3.connect("data/langgraph_checkpoints.sqlite", check_same_thread=False)
-    checkpointer = SqliteSaver(conn)
-
-    return workflow.compile(checkpointer=checkpointer)
+    return workflow.compile(checkpointer=_get_checkpointer())
 
 
 _AGENT_CACHE = {}

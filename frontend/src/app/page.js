@@ -14,7 +14,7 @@ import {
   streamChat,
   renameConversation,
   deleteConversation,
-} from "../lib/api";
+} from "./lib/api";
 import {
   applyAccentColor,
   loadAccentColor,
@@ -23,7 +23,7 @@ import {
   saveChatBackground,
   backgroundToStyle,
   SIDEBAR_STORAGE_KEY,
-} from "../lib/theme";
+} from "./lib/theme";
 
 const SUGGESTIONS = [
   "Summarize this document in three bullet points",

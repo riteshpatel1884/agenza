@@ -6,7 +6,7 @@ import {
   BACKGROUND_PRESETS,
   backgroundToStyle,
   applyAccentColor,
-} from "../lib/theme";
+} from "../app/lib/theme";
 
 function CloseIcon() {
   return (

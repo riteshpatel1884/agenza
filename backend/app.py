@@ -20,7 +20,7 @@ from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk
 
 logger = logging.getLogger("agenza")
 
-from agent import get_agent, list_models, DEFAULT_MODEL_ID
+from agent import get_agent
 from auth import get_current_user_id
 from database import (
     init_db,
@@ -95,12 +95,6 @@ async def get_usage_route(user_id: str = Depends(get_current_user_id)):
         "allowed": allowed,
         "seconds_until_reset": seconds_until_reset,
     }
-
-
-@app.get("/models")
-async def get_models():
-    """List of chat models the frontend can let the user pick from. Not user-specific."""
-    return {"models": list_models(), "default": DEFAULT_MODEL_ID}
 
 
 # ---------------------------------------------------------------------------
@@ -414,7 +408,6 @@ async def chat_stream(request: Request, user_id: str = Depends(get_current_user_
 
     user_message = data.get("message", "")
     thread_id = data.get("thread_id", "default")
-    selected_model = data.get("model", DEFAULT_MODEL_ID)
 
     if not user_message.strip():
         return JSONResponse({"error": "Message is required."}, status_code=400)
@@ -442,7 +435,7 @@ async def chat_stream(request: Request, user_id: str = Depends(get_current_user_
         )
 
     try:
-        agent = get_agent(selected_model)
+        agent = get_agent()
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
 

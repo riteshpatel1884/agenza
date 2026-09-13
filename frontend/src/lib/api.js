@@ -13,10 +13,11 @@ function authHeaders(token, extra = {}) {
   };
 }
 
-export async function fetchModels() {
-  // Not user-specific — no token needed.
-  const res = await fetch(`${API_BASE}/models`);
-  if (!res.ok) throw new Error("Failed to load models");
+export async function fetchUsage(token) {
+  const res = await fetch(`${API_BASE}/usage`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error("Could not fetch usage.");
   return res.json();
 }
 

@@ -1,9 +1,12 @@
 import os
 import re
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
 import certifi
+
+from key_pool import KeyPool, looks_like_rate_limit
 
 load_dotenv()
 
@@ -55,41 +58,78 @@ def _get_checkpointer():
 
 
 # ---------------------------------------------------------------------------
-# Model registry — built entirely from your .env file. Nothing here is
-# hardcoded: add/remove/rename models by editing .env only.
+# Model + key registry — built entirely from your .env file. There is no
+# user-facing model picker anymore: the backend automatically works through
+# every model/key combination you've configured, in order, and falls back
+# silently the moment one of them looks rate-limited or errors out.
 #
-# For each provider, list the models you want in the selector as numbered
-# env vars, and set that provider's API key:
+# For each provider, list the models as numbered env vars, and give the
+# provider one or more keys — a single <PREFIX>_API_KEY, or several numbered
+# ones (<PREFIX>_API_KEY_1, _2, _3, ...) if you have multiple accounts you
+# want to rotate across automatically:
+#
+#   GROQ_API_KEY_1=gsk_...
+#   GROQ_API_KEY_2=gsk_...
+#   GROQ_API_KEY_3=gsk_...
+#   GROQ_MODEL_1=openai/gpt-oss-120b
+#   GROQ_MODEL_2=openai/gpt-oss-20b
 #
 #   GEMINI_API_KEY=...
 #   GEMINI_MODEL_1=gemini-2.5-flash
-#   GEMINI_MODEL_2=gemini-2.5-pro
-#
-#   GROQ_API_KEY=...
-#   GROQ_MODEL_1=openai/gpt-oss-120b
-#   GROQ_MODEL_2=openai/gpt-oss-20b
 #
 #   MISTRAL_API_KEY=...
 #   MISTRAL_MODEL_1=mistral-large-latest
 #
-# You can add as many *_MODEL_N entries per provider as you want (3, 4, 5...).
-# A model only shows up if both its *_MODEL_N var and the provider's
-# *_API_KEY are set.
+# A model only shows up if both its *_MODEL_N var and at least one key for
+# that provider are set. Priority (which combo is tried first) follows the
+# order providers are declared below, then the numeric suffix of *_MODEL_N,
+# then the declared order of that provider's keys.
 # ---------------------------------------------------------------------------
 
 PROVIDERS = {
-    "gemini": {"env_prefix": "GEMINI", "label": "Gemini"},
     "groq": {"env_prefix": "GROQ", "label": "Groq"},
+    "gemini": {"env_prefix": "GEMINI", "label": "Gemini"},
     "mistral": {"env_prefix": "MISTRAL", "label": "Mistral"},
 }
 
 _MODEL_VAR_PATTERN = re.compile(r"^([A-Z]+)_MODEL_(\d+)$")
 
 
+def _discover_keys(env_prefix: str) -> list[str]:
+    """
+    Collect every key configured for a provider: a plain <PREFIX>_API_KEY
+    plus any <PREFIX>_API_KEY_1, _2, _3, ... — as many as your .env defines.
+    Order is preserved, since it doubles as fallback priority.
+    """
+    keys = []
+
+    single = os.getenv(f"{env_prefix}_API_KEY")
+    if single and single.strip():
+        keys.append(single.strip())
+
+    index = 1
+    while True:
+        value = os.getenv(f"{env_prefix}_API_KEY_{index}")
+        if value is None:
+            break
+        if value.strip():
+            keys.append(value.strip())
+        index += 1
+
+    return keys
+
+
+PROVIDER_KEY_POOLS = {
+    name: KeyPool(_discover_keys(info["env_prefix"])) for name, info in PROVIDERS.items()
+}
+
+
 def _discover_models():
     """
     Scan environment variables for <PREFIX>_MODEL_<N> entries and build the
-    registry: { model_id: {provider, model, label, api_key} }.
+    registry: { model_id: {provider, model, label} }. Key material lives
+    separately in PROVIDER_KEY_POOLS, since one model can be paired with
+    several keys.
     """
     prefix_to_provider = {info["env_prefix"]: name for name, info in PROVIDERS.items()}
 
@@ -115,10 +155,7 @@ def _discover_models():
     registry = {}
 
     for provider, index, model_name in found:
-        env_prefix = PROVIDERS[provider]["env_prefix"]
-        api_key = os.getenv(f"{env_prefix}_API_KEY")
-
-        if not api_key:
+        if not PROVIDER_KEY_POOLS[provider]:
             # Model listed but no key for its provider yet — skip it rather
             # than exposing a model that will just error out.
             continue
@@ -129,32 +166,12 @@ def _discover_models():
             "provider": provider,
             "model": model_name,
             "label": f"{PROVIDERS[provider]['label']} · {model_name}",
-            "api_key": api_key,
         }
 
     return registry
 
 
 MODEL_REGISTRY = _discover_models()
-
-# Optionally pin a default via DEFAULT_MODEL_ID=gemini-1 in .env.
-# Otherwise, fall back to the first model discovered above.
-DEFAULT_MODEL_ID = os.getenv("DEFAULT_MODEL_ID") or next(iter(MODEL_REGISTRY), None)
-
-
-def normalize_model_id(model_id):
-    """Fall back to the default model if the frontend sends something unknown."""
-    if not model_id or model_id not in MODEL_REGISTRY:
-        return DEFAULT_MODEL_ID
-    return model_id
-
-
-def list_models():
-    """Used by the /models endpoint so the frontend can populate the selector."""
-    return [
-        {"id": model_id, "label": info["label"], "provider": info["provider"]}
-        for model_id, info in MODEL_REGISTRY.items()
-    ]
 
 
 # ---------------------------------------------------------------------------
@@ -338,7 +355,75 @@ def search_jobs(
     )
 
 
-TOOLS = [send_email, search_jobs]
+# ---------------------------------------------------------------------------
+# Web search tool — lets the agent look up current, real-world information
+# (news, prices, "what's happening with X today", anything past its training
+# data) via Tavily. Same rotation pattern as the LLM providers: give it one
+# or more keys as TAVILY_API_KEY_1, _2, _3, ... in .env, and it automatically
+# moves to the next key the moment one comes back rate-limited.
+# ---------------------------------------------------------------------------
+
+TAVILY_KEY_POOL = KeyPool(_discover_keys("TAVILY"))
+_DEFAULT_SEARCH_RESULTS = 5
+_MAX_SEARCH_RESULTS = 10
+
+
+@tool
+def web_search(query: str, max_results: int | None = None) -> str:
+    """Search the live web for current, real-world information.
+
+    Use this whenever the user asks about something that could have
+    changed or that you can't be confident about from memory alone —
+    current events, news, prices, scores, "what's the latest on...",
+    people/companies/products you're unsure about, or anything time-
+    sensitive. Don't use it for general knowledge, definitions, or things
+    you already know confidently.
+
+    Args:
+        query: A short, specific search query (a few words works best).
+        max_results: Optional number of results to return (default 5, max 10).
+    """
+    if not TAVILY_KEY_POOL:
+        return "Web search isn't configured yet — add TAVILY_API_KEY_1 (and optionally more) to the .env file."
+
+    query = (query or "").strip()
+    if not query:
+        return "A search query is required."
+
+    count = max(1, min(int(max_results or _DEFAULT_SEARCH_RESULTS), _MAX_SEARCH_RESULTS))
+
+    from tavily import TavilyClient
+
+    last_error = None
+
+    for key in TAVILY_KEY_POOL.ordered_keys():
+        try:
+            client = TavilyClient(api_key=key)
+            response = client.search(query, max_results=count, search_depth="basic")
+            results = response.get("results", [])
+
+            if not results:
+                return f"No web results found for '{query}'."
+
+            lines = [f"Web search results for '{query}':"]
+            for r in results:
+                title = (r.get("title") or "").strip()
+                url = r.get("url") or ""
+                snippet = (r.get("content") or "").strip()[:400]
+                lines.append(f"- {title} ({url}): {snippet}")
+
+            return "\n".join(lines)
+
+        except Exception as exc:
+            last_error = exc
+            if looks_like_rate_limit(exc):
+                TAVILY_KEY_POOL.mark_limited(key)
+            continue
+
+    return f"Web search failed after trying all configured keys: {last_error}"
+
+
+TOOLS = [send_email, search_jobs, web_search]
 
 
 SYSTEM_PROMPT = """
@@ -362,20 +447,22 @@ pass that number as the tool's `count` argument. The job listings
 themselves are rendered to the user separately as cards, and you are not
 given their contents back — keep your reply to a short one-line summary
 rather than listing or describing the jobs yourself.
+
+You also have a web_search tool for current, real-world information —
+news, prices, recent events, or anything you can't confidently answer
+from memory. Call it when the user's question depends on up-to-date
+information, then answer using what it returns. Briefly mention that you
+searched the web when you use it, and don't fabricate sources or figures
+if the tool comes back empty — just say so.
 """
 
 
-def build_llm(model_id: str):
-    """Instantiate the correct chat model client for the given model id.
+def _instantiate_chat_model(provider: str, model_name: str, api_key: str):
+    """Instantiate the correct chat model client for a given provider/model/key.
 
     Provider SDKs are imported lazily so you only need the package for the
     provider(s) you actually configured in .env.
     """
-    info = MODEL_REGISTRY[model_id]
-    provider = info["provider"]
-    model_name = info["model"]
-    api_key = info["api_key"]
-
     if provider == "gemini":
         from langchain_google_genai import ChatGoogleGenerativeAI
 
@@ -397,25 +484,95 @@ def build_llm(model_id: str):
             model=model_name, api_key=api_key, temperature=0.5, streaming=True
         )
 
-    raise ValueError(f"Unknown provider '{provider}' for model '{model_id}'")
+    raise ValueError(f"Unknown provider '{provider}'")
 
 
-def build_agent(model_id: str):
+class FallbackChatModel:
     """
-    Build a LangGraph app: a chatbot node bound to TOOLS (currently just
-    send_email), plus a tools node it can loop through.
+    Wraps every configured (model, key) combination and tries them in
+    priority order, skipping whichever are currently on cooldown. The
+    moment one call looks like a rate limit / quota error, that key is put
+    on cooldown and the next candidate is tried immediately — the caller
+    (the LangGraph node below) only ever sees a single successful response
+    or, if literally every candidate failed, the last error.
+
+    This is what makes "GROQ_API_KEY_1 hit its limit" invisible to the
+    user: the very next candidate (GROQ_API_KEY_2, then _3, then another
+    provider entirely) picks up the same request without an extra round
+    trip from the frontend.
+    """
+
+    def __init__(self, candidates: list[dict]):
+        if not candidates:
+            raise ValueError(
+                "No models configured. Add at least one <PROVIDER>_MODEL_1 and "
+                "matching <PROVIDER>_API_KEY (or _API_KEY_1, _2, ...) to your .env file."
+            )
+        self._candidates = candidates
+
+    def _ordered_candidates(self):
+        now = time.time()
+        ready, cooling = [], []
+        for cand in self._candidates:
+            available_at = PROVIDER_KEY_POOLS[cand["provider"]].available_at(cand["key"])
+            (ready if available_at <= now else cooling).append((available_at, cand))
+        cooling.sort(key=lambda pair: pair[0])
+        return [cand for _, cand in ready] + [cand for _, cand in cooling]
+
+    def invoke(self, messages, *args, **kwargs):
+        last_exc = None
+
+        for cand in self._ordered_candidates():
+            try:
+                return cand["llm"].invoke(messages, *args, **kwargs)
+            except Exception as exc:
+                last_exc = exc
+                # Rotate away from this key on anything that looks like a
+                # rate limit; also rotate (without a cooldown) on any other
+                # error so a single bad candidate can't block the rest.
+                if looks_like_rate_limit(exc):
+                    PROVIDER_KEY_POOLS[cand["provider"]].mark_limited(cand["key"])
+                logger_note = f"{cand['provider']}/{cand['model']} failed, trying next candidate: {exc}"
+                print(logger_note)
+                continue
+
+        raise last_exc
+
+
+def _build_fallback_candidates() -> list[dict]:
+    """One entry per (model, key) combination, in priority order, each
+    already bound to TOOLS so the LangGraph node can call it directly."""
+    candidates = []
+
+    for model_id, info in MODEL_REGISTRY.items():
+        provider = info["provider"]
+        model_name = info["model"]
+
+        for key in PROVIDER_KEY_POOLS[provider].all_keys():
+            llm = _instantiate_chat_model(provider, model_name, key).bind_tools(TOOLS)
+            candidates.append(
+                {"model_id": model_id, "provider": provider, "model": model_name, "key": key, "llm": llm}
+            )
+
+    return candidates
+
+
+def build_agent():
+    """
+    Build a LangGraph app: a chatbot node backed by a fallback chain across
+    every configured model+key, plus a tools node it can loop through.
 
     Flow: chatbot -> (has tool call?) -> tools -> chatbot -> ... -> END.
     `tools_condition` checks the latest AI message for tool_calls and routes
     to the "tools" node if present, or ends the turn otherwise. Conversation
-    state is persisted per thread_id via the SQLite checkpointer, so the
+    state is persisted per thread_id via the Postgres checkpointer, so the
     model keeps context (and knows what it already sent) across turns.
 
     Per-user data (like SMTP credentials for send_email) is NOT baked in
     here — it's read from the run's config at call time, so this same
-    compiled graph is reused across every user of a given model.
+    compiled graph is reused across every signed-in user.
     """
-    llm = build_llm(model_id).bind_tools(TOOLS)
+    llm = FallbackChatModel(_build_fallback_candidates())
 
     def chatbot_node(state: MessagesState):
         messages = [SystemMessage(content=SYSTEM_PROMPT)] + state["messages"]
@@ -432,20 +589,16 @@ def build_agent(model_id: str):
     return workflow.compile(checkpointer=_get_checkpointer())
 
 
-_AGENT_CACHE = {}
+_AGENT = None
 
 
-def get_agent(model_id: str | None = None):
-    """Return a cached LangGraph agent for the given model, building it once."""
-    selected = normalize_model_id(model_id)
+def get_agent():
+    """Return the single cached agent, building it (and its fallback chain) once.
 
-    if not selected:
-        raise ValueError(
-            "No models configured. Add at least one <PROVIDER>_MODEL_1 and "
-            "matching <PROVIDER>_API_KEY to your .env file."
-        )
-
-    if selected not in _AGENT_CACHE:
-        _AGENT_CACHE[selected] = build_agent(selected)
-
-    return _AGENT_CACHE[selected]
+    There's no per-user model choice anymore — every request automatically
+    gets the best available model/key combination, with silent fallback.
+    """
+    global _AGENT
+    if _AGENT is None:
+        _AGENT = build_agent()
+    return _AGENT

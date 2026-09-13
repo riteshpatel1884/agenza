@@ -3,15 +3,15 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import Sidebar from "../components/Sidebar";
-import ModelSelector from "../components/ModelSelector";
+import UsageMeter from "@/components/UsageMeter";
 import ChatMessage from "../components/ChatMessage";
 import ChatInput from "../components/ChatInput";
 import ThemeToggle from "../components/ThemeToggle";
 import SettingsModal from "../components/SettingsModal";
 import {
-  fetchModels,
   fetchConversations,
   fetchHistory,
+  fetchUsage,
   streamChat,
   renameConversation,
   deleteConversation,
@@ -32,6 +32,13 @@ const SUGGESTIONS = [
   "Draft a follow-up email",
   "Explain a concept simply",
 ];
+
+function formatCountdown(totalSeconds) {
+  const s = Math.max(0, totalSeconds || 0);
+  const minutes = Math.floor(s / 60);
+  const seconds = s % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
 
 function makeThreadId() {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
@@ -83,14 +90,20 @@ export default function Home() {
   // during that first instant.
   const { getToken, isLoaded, isSignedIn } = useAuth();
 
-  const [models, setModels] = useState([]);
-  const [selectedModel, setSelectedModel] = useState("");
   const [conversations, setConversations] = useState([]);
   const [threadId, setThreadId] = useState(() => makeThreadId());
   const [messages, setMessages] = useState([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const bottomRef = useRef(null);
+
+  // --- Usage / hourly token budget ----------------------------------------
+  // Mirrors the backend's per-user hourly window (see /usage in app.py):
+  // once tokens_used reaches the limit, `allowed` goes false and the user
+  // is locked out of chat until secondsUntilReset counts down to 0 (a
+  // rolling 1-hour cooldown, not a fixed clock time).
+  const [usage, setUsage] = useState(null); // { limit, tokens_used, allowed, seconds_until_reset }
+  const [secondsLeft, setSecondsLeft] = useState(0);
 
   // --- Customization state -------------------------------------------------
   const [theme, setTheme] = useState("light");
@@ -108,14 +121,8 @@ export default function Home() {
   useEffect(() => {
     if (!isLoaded || !isSignedIn) return;
 
-    fetchModels()
-      .then((data) => {
-        setModels(data.models || []);
-        setSelectedModel(data.default || data.models?.[0]?.id || "");
-      })
-      .catch(() => setErrorMsg("Could not reach the backend. Is it running on port 8080?"));
-
     refreshConversations();
+    refreshUsage();
 
     const savedAccent = loadAccentColor();
     setAccentColor(savedAccent);
@@ -172,6 +179,36 @@ export default function Home() {
     }
   }
 
+  async function refreshUsage() {
+    try {
+      const token = await getToken();
+      const data = await fetchUsage(token);
+      setUsage(data);
+      setSecondsLeft(data.seconds_until_reset || 0);
+    } catch {
+      // Non-fatal — the usage pill just stays stale until the next refresh.
+    }
+  }
+
+  // Client-side ticking countdown so the "come back in X" message updates
+  // every second instead of only when the backend is polled again. Once it
+  // hits 0 we re-check with the server to confirm the window actually reset
+  // (tokens_used only clears server-side, on the next request).
+  useEffect(() => {
+    if (!usage || usage.allowed || secondsLeft <= 0) return;
+    const interval = setInterval(() => {
+      setSecondsLeft((s) => {
+        if (s <= 1) {
+          refreshUsage();
+          return 0;
+        }
+        return s - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usage, secondsLeft <= 0]);
+
   function handleNewChat() {
     setThreadId(makeThreadId());
     setMessages([]);
@@ -218,6 +255,8 @@ export default function Home() {
   }
 
   async function handleSend(text) {
+    if (usage && !usage.allowed) return;
+
     setErrorMsg("");
     setMessages((prev) => [...prev, { role: "user", content: text }, { role: "assistant", content: "" }]);
     setIsStreaming(true);
@@ -228,7 +267,6 @@ export default function Home() {
       token,
       message: text,
       threadId,
-      model: selectedModel,
       onToken: (token) => {
         setMessages((prev) => {
           const updated = [...prev];
@@ -249,9 +287,12 @@ export default function Home() {
       onDone: () => {
         setIsStreaming(false);
         refreshConversations();
+        refreshUsage();
       },
     });
   }
+
+  const chatLocked = Boolean(usage && !usage.allowed);
 
   const hasCustomBackground = chatBackground?.type && chatBackground.type !== "none";
   const mainStyle = backgroundToStyle(chatBackground);
@@ -301,12 +342,7 @@ export default function Home() {
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
-            <ModelSelector
-              models={models}
-              value={selectedModel}
-              onChange={setSelectedModel}
-              disabled={isStreaming}
-            />
+            <UsageMeter usage={usage} secondsLeft={secondsLeft} />
             <button
               onClick={() => setSettingsOpen(true)}
               title="Customize"
@@ -356,14 +392,16 @@ export default function Home() {
           )}
         </main>
 
-        {errorMsg && (
+        {(errorMsg || chatLocked) && (
           <div className="mx-auto flex w-full max-w-2xl items-center gap-2 px-4 pb-2 text-[13px] text-[var(--danger)]">
             <AlertIcon />
-            {errorMsg}
+            {chatLocked
+              ? `You've reached your hourly usage limit. Chat unlocks again in ${formatCountdown(secondsLeft)}.`
+              : errorMsg}
           </div>
         )}
 
-        <ChatInput onSend={handleSend} disabled={isStreaming || !selectedModel} />
+        <ChatInput onSend={handleSend} disabled={isStreaming || chatLocked} />
       </div>
 
       <SettingsModal

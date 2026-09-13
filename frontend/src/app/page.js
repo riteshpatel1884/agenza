@@ -119,6 +119,35 @@ export default function Home() {
   // it should always start closed on a fresh mobile visit).
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
+  // --- Real mobile viewport height -----------------------------------------
+  // Mobile browsers (and in-app/custom-tab browsers like the one in the
+  // screenshots) resize their address bar and bottom chrome in and out as
+  // you scroll, but plain CSS `100vh`/`h-screen` is locked to the *tallest*
+  // state of the page. That's what was pushing the composer down below the
+  // fold and hiding the header behind the browser's own UI. We track the
+  // actual visible height with the Visual Viewport API (falling back to
+  // window.innerHeight) and size the app shell to exactly that, in pixels,
+  // so the header and composer are always the fixed top/bottom of what's
+  // really on screen and only the message list scrolls. This also keeps the
+  // composer pinned just above the on-screen keyboard when it opens.
+  const [viewportHeight, setViewportHeight] = useState(null);
+
+  useEffect(() => {
+    function updateViewportHeight() {
+      const vv = window.visualViewport;
+      setViewportHeight(vv ? vv.height : window.innerHeight);
+    }
+    updateViewportHeight();
+    window.visualViewport?.addEventListener("resize", updateViewportHeight);
+    window.addEventListener("resize", updateViewportHeight);
+    window.addEventListener("orientationchange", updateViewportHeight);
+    return () => {
+      window.visualViewport?.removeEventListener("resize", updateViewportHeight);
+      window.removeEventListener("resize", updateViewportHeight);
+      window.removeEventListener("orientationchange", updateViewportHeight);
+    };
+  }, []);
+
   useEffect(() => {
     if (!isLoaded || !isSignedIn) return;
 
@@ -305,7 +334,10 @@ export default function Home() {
   }
 
   return (
-    <div className="flex h-screen h-[100dvh] overflow-hidden bg-[var(--bg-canvas)] text-[var(--text-primary)]">
+    <div
+      className="flex h-dvh h-screen overflow-hidden bg-[var(--bg-canvas)] text-[var(--text-primary)]"
+      style={viewportHeight ? { height: `${viewportHeight}px` } : undefined}
+    >
       <Sidebar
         conversations={conversations}
         activeThreadId={threadId}

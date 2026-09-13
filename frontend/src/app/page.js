@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import Sidebar from "../components/Sidebar";
 import UsageMeter from "@/components/UsageMeter";
+import UsageDetailsModal from "../components/UsageDetailsModal";
 import ChatMessage from "../components/ChatMessage";
 import ChatInput from "../components/ChatInput";
 import ThemeToggle from "../components/ThemeToggle";
@@ -27,10 +28,9 @@ import {
 } from "../lib/theme";
 
 const SUGGESTIONS = [
-  "Summarize this document in three bullet points",
-  "Help me debug a stack trace",
-  "Draft a follow-up email",
-  "Explain a concept simply",
+  "Search for job openings for me",
+  "Automate a daily email for me",
+  "What can you help me with?",
 ];
 
 function formatCountdown(totalSeconds) {
@@ -102,8 +102,9 @@ export default function Home() {
   // once tokens_used reaches the limit, `allowed` goes false and the user
   // is locked out of chat until secondsUntilReset counts down to 0 (a
   // rolling 1-hour cooldown, not a fixed clock time).
-  const [usage, setUsage] = useState(null); // { limit, tokens_used, allowed, seconds_until_reset }
+  const [usage, setUsage] = useState(null); // { limit, tokens_used, allowed, seconds_until_reset, total_tokens_used }
   const [secondsLeft, setSecondsLeft] = useState(0);
+  const [usageModalOpen, setUsageModalOpen] = useState(false);
 
   // --- Customization state -------------------------------------------------
   const [theme, setTheme] = useState("light");
@@ -304,7 +305,7 @@ export default function Home() {
   }
 
   return (
-    <div className="flex h-screen bg-[var(--bg-canvas)] text-[var(--text-primary)]">
+    <div className="flex h-screen h-[100dvh] overflow-hidden bg-[var(--bg-canvas)] text-[var(--text-primary)]">
       <Sidebar
         conversations={conversations}
         activeThreadId={threadId}
@@ -318,8 +319,8 @@ export default function Home() {
         onCloseMobile={() => setMobileSidebarOpen(false)}
       />
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-3 py-3 sm:px-6 sm:py-3.5">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="sticky top-0 z-20 flex shrink-0 items-center justify-between gap-2 border-b border-[var(--border)] bg-[var(--bg-canvas)] px-3 py-3 sm:px-6 sm:py-3.5">
           <div className="flex min-w-0 items-center gap-1.5">
             <button
               onClick={() => setMobileSidebarOpen(true)}
@@ -342,7 +343,7 @@ export default function Home() {
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
-            <UsageMeter usage={usage} secondsLeft={secondsLeft} />
+            <UsageMeter usage={usage} secondsLeft={secondsLeft} onClick={() => setUsageModalOpen(true)} />
             <button
               onClick={() => setSettingsOpen(true)}
               title="Customize"
@@ -354,7 +355,7 @@ export default function Home() {
           </div>
         </header>
 
-        <main className="scroll-theme flex-1 overflow-y-auto" style={mainStyle}>
+        <main className="scroll-theme flex-1 overflow-y-auto overscroll-contain" style={mainStyle}>
           {messages.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center px-4 text-center sm:px-6">
               <h1 className="text-[22px] font-medium tracking-tight text-[var(--text-primary)] sm:text-[26px]">
@@ -413,6 +414,13 @@ export default function Home() {
         chatBackground={chatBackground}
         onBackgroundChange={handleBackgroundChange}
         getToken={getToken}
+      />
+
+      <UsageDetailsModal
+        open={usageModalOpen}
+        onClose={() => setUsageModalOpen(false)}
+        usage={usage}
+        secondsLeft={secondsLeft}
       />
     </div>
   );

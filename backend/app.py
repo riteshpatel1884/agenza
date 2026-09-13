@@ -88,12 +88,15 @@ def approx_token_count(text: str) -> int:
 
 @app.get("/usage")
 async def get_usage_route(user_id: str = Depends(get_current_user_id)):
-    allowed, tokens_used, seconds_until_reset = get_usage_status(user_id, HOURLY_TOKEN_LIMIT)
+    allowed, tokens_used, seconds_until_reset, total_tokens_used = get_usage_status(user_id, HOURLY_TOKEN_LIMIT)
     return {
         "limit": HOURLY_TOKEN_LIMIT,
         "tokens_used": tokens_used,
         "allowed": allowed,
         "seconds_until_reset": seconds_until_reset,
+        # Lifetime counter, never cleared by the hourly window reset — shown
+        # in full (not abbreviated) in the usage popup on the frontend.
+        "total_tokens_used": total_tokens_used,
     }
 
 
@@ -412,7 +415,7 @@ async def chat_stream(request: Request, user_id: str = Depends(get_current_user_
     if not user_message.strip():
         return JSONResponse({"error": "Message is required."}, status_code=400)
 
-    allowed, tokens_used, seconds_until_reset = get_usage_status(user_id, HOURLY_TOKEN_LIMIT)
+    allowed, tokens_used, seconds_until_reset, _total_tokens_used = get_usage_status(user_id, HOURLY_TOKEN_LIMIT)
     if not allowed:
         minutes_left = max(1, (seconds_until_reset + 59) // 60)
 

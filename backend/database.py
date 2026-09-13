@@ -116,6 +116,9 @@ class UserUsage(Base):
     user_id = Column(String, unique=True, index=True)
     window_start = Column(DateTime, default=datetime.utcnow)
     tokens_used = Column(Integer, default=0)
+    # Lifetime counter — never reset by the rolling hourly window above.
+    # Shown to the user as "total tokens used" in the usage popup.
+    total_tokens_used = Column(Integer, default=0)
 
 
 class JobPreferences(Base):
@@ -144,6 +147,30 @@ class JobPreferences(Base):
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    _ensure_total_tokens_column()
+
+
+def _ensure_total_tokens_column():
+    """
+    `Base.metadata.create_all` only creates tables that don't exist yet — it
+    never alters an existing table, so a fresh `total_tokens_used` column on
+    an already-deployed `user_usage` table needs a one-off ALTER TABLE. This
+    runs once at startup and is a no-op if the column is already there.
+    """
+    try:
+        with engine.connect() as conn:
+            existing_columns = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(user_usage)")}
+            if "total_tokens_used" not in existing_columns:
+                conn.exec_driver_sql(
+                    "ALTER TABLE user_usage ADD COLUMN total_tokens_used INTEGER DEFAULT 0"
+                )
+                conn.commit()
+    except Exception:
+        # Non-SQLite backends (e.g. Postgres) use a different introspection
+        # query; if this best-effort check fails, the column still exists on
+        # any freshly created table via create_all above, so it's safe to
+        # continue rather than crash startup.
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -540,9 +567,11 @@ def mark_automation_sent(automation_id: int, sent_at: datetime):
 
 def get_usage_status(user_id: str, limit: int, window_seconds: int = 3600):
     """
-    Returns (allowed: bool, tokens_used: int, seconds_until_reset: int).
-    Automatically resets the window if it's been more than window_seconds
-    since it started — callers don't need a separate "reset" step.
+    Returns (allowed: bool, tokens_used: int, seconds_until_reset: int,
+    total_tokens_used: int). `total_tokens_used` is a lifetime counter that
+    the rolling-window reset below never touches. Automatically resets the
+    hourly window if it's been more than window_seconds since it started —
+    callers don't need a separate "reset" step.
     """
     db = SessionLocal()
 
@@ -551,7 +580,7 @@ def get_usage_status(user_id: str, limit: int, window_seconds: int = 3600):
         now = datetime.utcnow()
 
         if not usage:
-            usage = UserUsage(user_id=user_id, window_start=now, tokens_used=0)
+            usage = UserUsage(user_id=user_id, window_start=now, tokens_used=0, total_tokens_used=0)
             db.add(usage)
             db.commit()
             db.refresh(usage)
@@ -566,24 +595,29 @@ def get_usage_status(user_id: str, limit: int, window_seconds: int = 3600):
 
         seconds_until_reset = max(0, int(window_seconds - elapsed))
         allowed = usage.tokens_used < limit
-        return allowed, usage.tokens_used, seconds_until_reset
+        return allowed, usage.tokens_used, seconds_until_reset, (usage.total_tokens_used or 0)
 
     finally:
         db.close()
 
 
 def add_usage(user_id: str, tokens: int):
-    """Adds to this user's usage counter for the current window."""
+    """
+    Adds to this user's usage counter for the current window, and to their
+    lifetime total (which is never reset).
+    """
     db = SessionLocal()
 
     try:
         usage = db.query(UserUsage).filter(UserUsage.user_id == user_id).first()
 
         if not usage:
-            usage = UserUsage(user_id=user_id, window_start=datetime.utcnow(), tokens_used=0)
+            usage = UserUsage(user_id=user_id, window_start=datetime.utcnow(), tokens_used=0, total_tokens_used=0)
             db.add(usage)
 
-        usage.tokens_used = (usage.tokens_used or 0) + max(0, tokens)
+        spent = max(0, tokens)
+        usage.tokens_used = (usage.tokens_used or 0) + spent
+        usage.total_tokens_used = (usage.total_tokens_used or 0) + spent
         db.commit()
 
     finally:

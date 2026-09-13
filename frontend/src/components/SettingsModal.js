@@ -90,7 +90,14 @@ export default function SettingsModal({
   getToken,
 }) {
   const [customHex, setCustomHex] = useState(accentColor);
-  const [tab, setTab] = useState("accent");
+  // Top-level tabs are kept to 3 (Appearance / Email / Job Search) so they
+  // all fit on a narrow mobile screen without any of them being pushed off
+  // and hidden — Accent color + Chat background live together under
+  // "Appearance", and Email + Automate live together under "Email", each
+  // split by a small sub-tab toggle instead of their own top-level tab.
+  const [tab, setTab] = useState("appearance");
+  const [appearanceSubTab, setAppearanceSubTab] = useState("accent"); // "accent" | "background"
+  const [emailSubTab, setEmailSubTab] = useState("connect"); // "connect" | "automate"
   const fileInputRef = useRef(null);
 
   // --- Email settings state -------------------------------------------
@@ -175,12 +182,12 @@ export default function SettingsModal({
   const [automationError, setAutomationError] = useState("");
 
   useEffect(() => {
-    if (!open || tab !== "automate") return;
+    if (!open || tab !== "email" || emailSubTab !== "automate") return;
     getToken()
       .then((token) => listAutomations(token))
       .then((data) => setAutomations(data.automations || []))
       .catch(() => setAutomationError("Could not load automations."));
-  }, [open, getToken, tab]);
+  }, [open, getToken, tab, emailSubTab]);
 
   async function handleCreateAutomation(e) {
     e.preventDefault();
@@ -355,10 +362,8 @@ export default function SettingsModal({
 
         <div className="flex gap-1 border-b border-[var(--border-soft)] px-5 pt-3">
           {[
-            { id: "accent", label: "Accent color" },
-            { id: "background", label: "Chat background" },
+            { id: "appearance", label: "Appearance" },
             { id: "email", label: "Email" },
-            { id: "automate", label: "Automate" },
             { id: "jobs", label: "Job Search" },
           ].map((t) => (
             <button
@@ -376,7 +381,51 @@ export default function SettingsModal({
         </div>
 
         <div className="max-h-[60vh] overflow-y-auto px-5 py-5">
-          {tab === "accent" && (
+          {tab === "appearance" && (
+            <div className="mb-4 flex gap-1.5 rounded-lg bg-[var(--bg-canvas)] p-1">
+              {[
+                { id: "accent", label: "Accent color" },
+                { id: "background", label: "Chat background" },
+              ].map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setAppearanceSubTab(t.id)}
+                  className={`flex-1 rounded-md px-2.5 py-1.5 text-[12.5px] font-medium transition-colors ${
+                    appearanceSubTab === t.id
+                      ? "bg-[var(--bg-elevated)] text-[var(--text-primary)] shadow-sm"
+                      : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {tab === "email" && (
+            <div className="mb-4 flex gap-1.5 rounded-lg bg-[var(--bg-canvas)] p-1">
+              {[
+                { id: "connect", label: "Connect" },
+                { id: "automate", label: "Automate" },
+              ].map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setEmailSubTab(t.id)}
+                  className={`flex-1 rounded-md px-2.5 py-1.5 text-[12.5px] font-medium transition-colors ${
+                    emailSubTab === t.id
+                      ? "bg-[var(--bg-elevated)] text-[var(--text-primary)] shadow-sm"
+                      : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {tab === "appearance" && appearanceSubTab === "accent" && (
             <div>
               <p className="mb-3 text-[13px] text-[var(--text-muted)]">
                 Pick a color for buttons, links, and highlights across the app.
@@ -433,7 +482,7 @@ export default function SettingsModal({
             </div>
           )}
 
-          {tab === "background" && (
+          {tab === "appearance" && appearanceSubTab === "background" && (
             <div>
               <p className="mb-3 text-[13px] text-[var(--text-muted)]">
                 Choose a wallpaper for the message area, or upload your own image.
@@ -520,7 +569,7 @@ export default function SettingsModal({
             </div>
           )}
 
-          {tab === "email" && (
+          {tab === "email" && emailSubTab === "connect" && (
             <div>
               <p className="mb-3 text-[13px] text-[var(--text-muted)]">
                 Connect an inbox so the assistant can send emails for you when you ask it to.
@@ -637,7 +686,7 @@ export default function SettingsModal({
             </div>
           )}
 
-          {tab === "automate" && (
+          {tab === "email" && emailSubTab === "automate" && (
             <div>
               <p className="mb-3 text-[13px] text-[var(--text-muted)]">
                 Set up an email that sends itself on a schedule — every hour, or once a day at a set time.
@@ -645,7 +694,7 @@ export default function SettingsModal({
 
               {!emailStatus?.configured && (
                 <p className="mb-4 rounded-lg border border-[var(--border-soft)] bg-[var(--bg-canvas)] px-3 py-2.5 text-[12px] text-[var(--text-muted)]">
-                  Connect your email in the Email tab first — automations need somewhere to send from.
+                  Connect your email in the Connect tab first — automations need somewhere to send from.
                 </p>
               )}
 

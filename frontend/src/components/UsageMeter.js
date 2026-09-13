@@ -26,8 +26,13 @@ function formatCompact(n) {
  * same rolling window that also blocks /chat/stream server-side, so this
  * is just making that existing 1-hour cooldown visible instead of letting
  * the user find out only when a message fails.
+ *
+ * The pill itself only ever shows an abbreviated count (e.g. "1.2k/2.5k")
+ * so it stays small in the header — tapping/clicking it calls `onClick`,
+ * which the parent uses to open a popup with the exact numbers and the
+ * user's lifetime total (see UsageDetailsModal).
  */
-export default function UsageMeter({ usage, secondsLeft }) {
+export default function UsageMeter({ usage, secondsLeft, onClick }) {
   if (!usage) return null;
 
   const { limit, tokens_used: tokensUsed, allowed } = usage;
@@ -35,26 +40,30 @@ export default function UsageMeter({ usage, secondsLeft }) {
 
   if (!allowed) {
     return (
-      <div
-        title="Hourly usage limit reached"
-        className="flex items-center gap-1.5 rounded-lg border border-[var(--danger)]/40 bg-[var(--danger)]/10 px-2.5 py-1.5 text-[12px] font-medium text-[var(--danger)]"
+      <button
+        type="button"
+        onClick={onClick}
+        title="Hourly usage limit reached — tap for details"
+        className="flex items-center gap-1.5 rounded-lg border border-[var(--danger)]/40 bg-[var(--danger)]/10 px-2.5 py-1.5 text-[12px] font-medium text-[var(--danger)] transition-colors hover:bg-[var(--danger)]/15"
       >
         <BoltIcon />
         <span className="hidden sm:inline">Limit reached · resets in</span>
         <span className="tabular-nums">{formatCountdown(secondsLeft)}</span>
-      </div>
+      </button>
     );
   }
 
   const nearLimit = pct >= 80;
 
   return (
-    <div
-      title={`${tokensUsed.toLocaleString()} / ${limit.toLocaleString()} tokens used this hour`}
-      className={`flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-[12px] font-medium sm:px-2.5 ${
+    <button
+      type="button"
+      onClick={onClick}
+      title={`${tokensUsed.toLocaleString()} / ${limit.toLocaleString()} tokens used this hour — tap for details`}
+      className={`flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-[12px] font-medium transition-colors sm:px-2.5 ${
         nearLimit
-          ? "border-[var(--danger)]/40 text-[var(--danger)]"
-          : "border-[var(--border)] text-[var(--text-muted)]"
+          ? "border-[var(--danger)]/40 text-[var(--danger)] hover:bg-[var(--danger)]/10"
+          : "border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
       }`}
     >
       <BoltIcon />
@@ -64,6 +73,6 @@ export default function UsageMeter({ usage, secondsLeft }) {
           {tokensUsed.toLocaleString()} / {limit.toLocaleString()}
         </span>
       </span>
-    </div>
+    </button>
   );
 }

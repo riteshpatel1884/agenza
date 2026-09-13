@@ -17,6 +17,9 @@ import {
   deleteAutomation,
   getJobPreferences,
   saveJobPreferences,
+  getResume,
+  uploadResume,
+  deleteResume,
 } from "../lib/api";
 
 function CloseIcon() {
@@ -98,6 +101,7 @@ export default function SettingsModal({
   const [tab, setTab] = useState("appearance");
   const [appearanceSubTab, setAppearanceSubTab] = useState("accent"); // "accent" | "background"
   const [emailSubTab, setEmailSubTab] = useState("connect"); // "connect" | "automate"
+  const [jobsSubTab, setJobsSubTab] = useState("preferences"); // "preferences" | "resume"
   const fileInputRef = useRef(null);
 
   // --- Email settings state -------------------------------------------
@@ -290,6 +294,60 @@ export default function SettingsModal({
     }
   }
 
+  // --- Resume state --------------------------------------------------------
+  const [resume, setResume] = useState(null); // { configured, filename, skills, experience, education, projects, preferred_roles, experience_years }
+  const [resumeLoaded, setResumeLoaded] = useState(false);
+  const [resumeUploading, setResumeUploading] = useState(false);
+  const [resumeError, setResumeError] = useState("");
+  const resumeFileInputRef = useRef(null);
+
+  useEffect(() => {
+    if (!open || tab !== "jobs" || jobsSubTab !== "resume") return;
+    setResumeError("");
+    getToken()
+      .then((token) => getResume(token))
+      .then((data) => {
+        setResume(data);
+        setResumeLoaded(true);
+      })
+      .catch(() => {
+        setResumeError("Could not load your resume.");
+        setResumeLoaded(true);
+      });
+  }, [open, getToken, tab, jobsSubTab]);
+
+  async function handleResumeFileChange(e) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file again later
+    if (!file) return;
+
+    setResumeUploading(true);
+    setResumeError("");
+    try {
+      const token = await getToken();
+      const data = await uploadResume(token, file);
+      setResume(data);
+    } catch (err) {
+      setResumeError(err.message || "Could not read that resume.");
+    } finally {
+      setResumeUploading(false);
+    }
+  }
+
+  async function handleRemoveResume() {
+    setResumeUploading(true);
+    setResumeError("");
+    try {
+      const token = await getToken();
+      await deleteResume(token);
+      setResume({ configured: false });
+    } catch {
+      setResumeError("Could not remove your resume.");
+    } finally {
+      setResumeUploading(false);
+    }
+  }
+
   useEffect(() => {
     setCustomHex(accentColor);
   }, [accentColor, open]);
@@ -415,6 +473,28 @@ export default function SettingsModal({
                   onClick={() => setEmailSubTab(t.id)}
                   className={`flex-1 rounded-md px-2.5 py-1.5 text-[12.5px] font-medium transition-colors ${
                     emailSubTab === t.id
+                      ? "bg-[var(--bg-elevated)] text-[var(--text-primary)] shadow-sm"
+                      : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {tab === "jobs" && (
+            <div className="mb-4 flex gap-1.5 rounded-lg bg-[var(--bg-canvas)] p-1">
+              {[
+                { id: "preferences", label: "Preferences" },
+                { id: "resume", label: "Resume" },
+              ].map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setJobsSubTab(t.id)}
+                  className={`flex-1 rounded-md px-2.5 py-1.5 text-[12.5px] font-medium transition-colors ${
+                    jobsSubTab === t.id
                       ? "bg-[var(--bg-elevated)] text-[var(--text-primary)] shadow-sm"
                       : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
                   }`}
@@ -829,7 +909,7 @@ export default function SettingsModal({
             </div>
           )}
 
-          {tab === "jobs" && (
+          {tab === "jobs" && jobsSubTab === "preferences" && (
             <div>
               <p className="mb-3 flex items-start gap-2 text-[13px] text-[var(--text-muted)]">
                 <span className="mt-0.5 text-[var(--text-faint)]"><BriefcaseIcon /></span>
@@ -986,6 +1066,153 @@ export default function SettingsModal({
                     {jobPrefsSaving ? "Saving…" : "Save job preferences"}
                   </button>
                 </form>
+              )}
+            </div>
+          )}
+
+          {tab === "jobs" && jobsSubTab === "resume" && (
+            <div>
+              <p className="mb-3 flex items-start gap-2 text-[13px] text-[var(--text-muted)]">
+                <span className="mt-0.5 text-[var(--text-faint)]"><BriefcaseIcon /></span>
+                Upload your resume once and every job search is ranked by how well it actually
+                matches your skills and experience — try asking "find jobs I'm actually qualified for."
+              </p>
+
+              {!resumeLoaded && !resumeError && (
+                <p className="text-[13px] text-[var(--text-muted)]">Loading…</p>
+              )}
+
+              {resumeLoaded && (
+                <div className="space-y-3">
+                  <input
+                    ref={resumeFileInputRef}
+                    type="file"
+                    accept=".pdf,.docx,.txt,.md"
+                    onChange={handleResumeFileChange}
+                    className="hidden"
+                  />
+
+                  {!resume?.configured && (
+                    <button
+                      type="button"
+                      onClick={() => resumeFileInputRef.current?.click()}
+                      disabled={resumeUploading}
+                      className="flex w-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--border)] px-3 py-8 text-[13px] font-medium text-[var(--text-muted)] transition-colors hover:border-[var(--accent)] hover:text-[var(--text-primary)] disabled:opacity-50"
+                    >
+                      <UploadIcon />
+                      {resumeUploading ? "Reading your resume…" : "Upload resume (PDF, DOCX, or TXT)"}
+                    </button>
+                  )}
+
+                  {resume?.configured && (
+                    <div className="rounded-lg border border-[var(--border-soft)] bg-[var(--bg-canvas)] px-3.5 py-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="truncate text-[13px] font-medium text-[var(--text-primary)]">
+                          {resume.filename || "Resume"}
+                        </p>
+                        <div className="flex shrink-0 gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => resumeFileInputRef.current?.click()}
+                            disabled={resumeUploading}
+                            className="rounded-md border border-[var(--border)] px-2 py-1 text-[11.5px] font-medium text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] disabled:opacity-50"
+                          >
+                            {resumeUploading ? "Reading…" : "Replace"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleRemoveResume}
+                            disabled={resumeUploading}
+                            className="rounded-md border border-[var(--border)] px-2 py-1 text-[11.5px] font-medium text-[var(--danger)] transition-colors hover:bg-[var(--danger)]/10 disabled:opacity-50"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+
+                      {typeof resume.experience_years === "number" && (
+                        <p className="mt-1 text-[12px] text-[var(--text-muted)]">
+                          ~{resume.experience_years} year{resume.experience_years === 1 ? "" : "s"} of experience
+                        </p>
+                      )}
+
+                      {resume.preferred_roles?.length > 0 && (
+                        <div className="mt-2.5">
+                          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[var(--text-faint)]">
+                            Best-fit roles
+                          </p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {resume.preferred_roles.map((role) => (
+                              <span
+                                key={role}
+                                className="rounded-full bg-[var(--accent-soft)] px-2.5 py-0.5 text-[11.5px] text-[var(--text-primary)]"
+                              >
+                                {role}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {resume.skills?.length > 0 && (
+                        <div className="mt-2.5">
+                          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[var(--text-faint)]">
+                            Skills
+                          </p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {resume.skills.slice(0, 24).map((skill) => (
+                              <span
+                                key={skill}
+                                className="rounded-full border border-[var(--border)] px-2.5 py-0.5 text-[11.5px] text-[var(--text-muted)]"
+                              >
+                                {skill}
+                              </span>
+                            ))}
+                            {resume.skills.length > 24 && (
+                              <span className="text-[11.5px] text-[var(--text-faint)]">
+                                +{resume.skills.length - 24} more
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {resume.experience?.length > 0 && (
+                        <div className="mt-2.5">
+                          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[var(--text-faint)]">
+                            Experience
+                          </p>
+                          <ul className="space-y-1">
+                            {resume.experience.slice(0, 5).map((role, i) => (
+                              <li key={i} className="text-[12.5px] text-[var(--text-muted)]">
+                                <span className="text-[var(--text-primary)]">{role.title || "Role"}</span>
+                                {role.company ? ` · ${role.company}` : ""}
+                                {role.years ? ` · ${role.years} yr` : ""}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {resume.education?.length > 0 && (
+                        <div className="mt-2.5">
+                          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[var(--text-faint)]">
+                            Education
+                          </p>
+                          <ul className="space-y-1">
+                            {resume.education.map((ed, i) => (
+                              <li key={i} className="text-[12.5px] text-[var(--text-muted)]">
+                                {[ed.degree, ed.institution, ed.year].filter(Boolean).join(" · ")}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {resumeError && <p className="text-[12px] text-[var(--danger)]">{resumeError}</p>}
+                </div>
               )}
             </div>
           )}

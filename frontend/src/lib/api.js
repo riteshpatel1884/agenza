@@ -188,6 +188,55 @@ export async function saveJobPreferences(token, preferences) {
 }
 
 /**
+ * Fetches the signed-in user's parsed resume (skills, experience,
+ * education, projects, preferred_roles). Returns { configured: false } if
+ * nothing has been uploaded yet.
+ */
+export async function getResume(token) {
+  const res = await fetch(`${API_BASE}/resume`, {
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error("Failed to load resume");
+  return res.json();
+}
+
+/**
+ * Uploads a resume file (PDF, DOCX, or TXT) for parsing. Replaces any
+ * previously uploaded resume. `file` is a browser File object, e.g. from
+ * an <input type="file"> change event.
+ */
+export async function uploadResume(token, file) {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const res = await fetch(`${API_BASE}/resume`, {
+    method: "POST",
+    // No Content-Type here — the browser sets the multipart boundary
+    // itself based on the FormData body, and overriding it breaks the
+    // upload.
+    headers: authHeaders(token),
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to upload resume");
+  }
+  return res.json();
+}
+
+/**
+ * Removes the signed-in user's stored resume.
+ */
+export async function deleteResume(token) {
+  const res = await fetch(`${API_BASE}/resume`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error("Failed to remove resume");
+  return res.json();
+}
+
+/**
  * Streams a chat response from the backend.
  *
  * The backend sends Server-Sent-Events-style chunks ("data: {...}\n\n") but

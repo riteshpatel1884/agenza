@@ -28,6 +28,24 @@ function ArrowUpRightIcon() {
   );
 }
 
+function ChevronIcon({ expanded }) {
+  return (
+    <svg
+      width="11"
+      height="11"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={`transition-transform ${expanded ? "rotate-180" : ""}`}
+    >
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  );
+}
+
 function timeAgo(isoString) {
   if (!isoString) return "";
   const then = new Date(isoString).getTime();
@@ -50,8 +68,28 @@ function stripHtml(html) {
   return html.replace(/<[^>]*>/g, "");
 }
 
+// Matches the factor names job_scoring.py attaches to each job's
+// score_breakdown — only factors that could actually be scored are present
+// (e.g. Skills/Experience are omitted entirely when the user has no resume
+// uploaded), so this just needs a display label for whichever show up.
+const FACTOR_LABELS = {
+  role: "Role Match",
+  location: "Location Match",
+  skills: "Skills Match",
+  experience: "Experience Match",
+  salary: "Salary Match",
+  freshness: "Freshness",
+};
+
+function relevanceStyle(score) {
+  if (score >= 85) return "border-emerald-500/40 bg-emerald-500/10 text-emerald-500";
+  if (score >= 60) return "border-amber-500/40 bg-amber-500/10 text-amber-500";
+  return "border-[var(--border)] bg-[var(--bg-canvas)] text-[var(--text-muted)]";
+}
+
 export default function JobResults({ jobs, count }) {
   const [query, setQuery] = useState("");
+  const [expandedKey, setExpandedKey] = useState(null);
 
   const filtered = useMemo(() => {
     if (!query.trim()) return jobs;
@@ -69,6 +107,8 @@ export default function JobResults({ jobs, count }) {
     );
   }
 
+  const hasScores = jobs.some((j) => typeof j.relevance_score === "number");
+
   return (
     <div className="mt-2 w-full max-w-2xl">
       <div className="mb-2 flex items-center justify-between gap-2">
@@ -76,6 +116,7 @@ export default function JobResults({ jobs, count }) {
           {typeof count === "number" && count > jobs.length
             ? `Showing ${jobs.length} of ${count} matching jobs`
             : `${jobs.length} job${jobs.length === 1 ? "" : "s"} found`}
+          {hasScores && <span> · ranked by relevance</span>}
         </p>
         {jobs.length > 4 && (
           <div className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1">
@@ -97,12 +138,27 @@ export default function JobResults({ jobs, count }) {
           const salary = formatSalary(job.salary_min, job.salary_max);
           const description = stripHtml(job.description);
           const snippet = description.length > 220 ? `${description.slice(0, 220).trim()}…` : description;
+          const key = `${job.url || job.title}-${i}`;
+          const hasScore = typeof job.relevance_score === "number";
+          const breakdown = job.score_breakdown || {};
+          const isExpanded = expandedKey === key;
 
           return (
             <div
-              key={`${job.url || job.title}-${i}`}
+              key={key}
               className="rounded-xl border border-[var(--border-soft)] bg-[var(--bg-elevated)] px-4 py-3.5 shadow-sm"
             >
+              {hasScore && (
+                <button
+                  type="button"
+                  onClick={() => setExpandedKey((prev) => (prev === key ? null : key))}
+                  className={`mb-2 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11.5px] font-medium ${relevanceStyle(job.relevance_score)}`}
+                >
+                  {job.relevance_score}% match
+                  <ChevronIcon expanded={isExpanded} />
+                </button>
+              )}
+
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="truncate text-[14px] font-medium text-[var(--text-primary)]">{job.title}</p>
@@ -132,6 +188,27 @@ export default function JobResults({ jobs, count }) {
                 {job.contract_time && <span className="capitalize">{job.contract_time.replace("_", " ")}</span>}
                 {job.created && <span>{timeAgo(job.created)}</span>}
               </div>
+
+              {isExpanded && Object.keys(breakdown).length > 0 && (
+                <div className="mt-2.5 space-y-1.5 rounded-lg bg-[var(--bg-canvas)] px-3 py-2.5">
+                  {Object.entries(breakdown).map(([factor, score]) => (
+                    <div key={factor} className="flex items-center gap-2 text-[11.5px]">
+                      <span className="w-[104px] shrink-0 text-[var(--text-muted)]">
+                        {FACTOR_LABELS[factor] || factor}
+                      </span>
+                      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--border-soft)]">
+                        <div
+                          className="h-full rounded-full bg-[var(--accent)]"
+                          style={{ width: `${Math.min(100, Math.max(0, score))}%` }}
+                        />
+                      </div>
+                      <span className="w-9 shrink-0 text-right tabular-nums text-[var(--text-faint)]">
+                        {Math.round(score)}%
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {snippet && (
                 <p className="mt-2 text-[13px] leading-6 text-[var(--text-muted)]">{snippet}</p>

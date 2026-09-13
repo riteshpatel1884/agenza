@@ -10,6 +10,7 @@ from sqlalchemy import (
     Text,
     DateTime,
     UniqueConstraint,
+    inspect,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -156,19 +157,23 @@ def _ensure_total_tokens_column():
     never alters an existing table, so a fresh `total_tokens_used` column on
     an already-deployed `user_usage` table needs a one-off ALTER TABLE. This
     runs once at startup and is a no-op if the column is already there.
+
+    Uses SQLAlchemy's `inspect()` instead of a raw PRAGMA/information_schema
+    query so this works the same on Postgres (production, e.g. Neon) and
+    SQLite (local dev) — `ALTER TABLE ... ADD COLUMN` is valid syntax on
+    both.
     """
     try:
-        with engine.connect() as conn:
-            existing_columns = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(user_usage)")}
-            if "total_tokens_used" not in existing_columns:
+        inspector = inspect(engine)
+        existing_columns = {col["name"] for col in inspector.get_columns("user_usage")}
+        if "total_tokens_used" not in existing_columns:
+            with engine.begin() as conn:
                 conn.exec_driver_sql(
                     "ALTER TABLE user_usage ADD COLUMN total_tokens_used INTEGER DEFAULT 0"
                 )
-                conn.commit()
     except Exception:
-        # Non-SQLite backends (e.g. Postgres) use a different introspection
-        # query; if this best-effort check fails, the column still exists on
-        # any freshly created table via create_all above, so it's safe to
+        # Table may not exist yet on a brand-new database — create_all above
+        # already created it with the column in that case, so it's safe to
         # continue rather than crash startup.
         pass
 

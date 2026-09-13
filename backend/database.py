@@ -120,6 +120,12 @@ class UserUsage(Base):
     # Lifetime counter — never reset by the rolling hourly window above.
     # Shown to the user as "total tokens used" in the usage popup.
     total_tokens_used = Column(Integer, default=0)
+    # Per-user override of the app-wide hourly limit (HOURLY_TOKEN_LIMIT in
+    # app.py, 2500 by default). NULL means "use the app-wide default".
+    # Set to a specific number to raise (or lower) just this user's cap, or
+    # to UNLIMITED_TOKEN_LIMIT (-1) to remove their cap entirely — e.g. for
+    # an admin account. Manage this with set_user_token_limit() below.
+    token_limit = Column(Integer, nullable=True)
 
 
 class JobPreferences(Base):
@@ -148,15 +154,24 @@ class JobPreferences(Base):
 
 def init_db():
     Base.metadata.create_all(bind=engine)
-    _ensure_total_tokens_column()
+    _ensure_user_usage_columns()
 
 
-def _ensure_total_tokens_column():
+# Columns added to UserUsage after it was first deployed. Mapped to their
+# ALTER TABLE type/default so a single loop can add whichever are missing.
+_USER_USAGE_MIGRATIONS = {
+    "total_tokens_used": "INTEGER DEFAULT 0",
+    "token_limit": "INTEGER",
+}
+
+
+def _ensure_user_usage_columns():
     """
     `Base.metadata.create_all` only creates tables that don't exist yet — it
-    never alters an existing table, so a fresh `total_tokens_used` column on
-    an already-deployed `user_usage` table needs a one-off ALTER TABLE. This
-    runs once at startup and is a no-op if the column is already there.
+    never alters an existing table, so columns added to `UserUsage` after it
+    was first deployed (total_tokens_used, token_limit) need a one-off
+    ALTER TABLE. This runs once at startup and is a no-op for any column
+    that's already there.
 
     Uses SQLAlchemy's `inspect()` instead of a raw PRAGMA/information_schema
     query so this works the same on Postgres (production, e.g. Neon) and
@@ -166,15 +181,17 @@ def _ensure_total_tokens_column():
     try:
         inspector = inspect(engine)
         existing_columns = {col["name"] for col in inspector.get_columns("user_usage")}
-        if "total_tokens_used" not in existing_columns:
+        missing = {
+            name: ddl for name, ddl in _USER_USAGE_MIGRATIONS.items() if name not in existing_columns
+        }
+        if missing:
             with engine.begin() as conn:
-                conn.exec_driver_sql(
-                    "ALTER TABLE user_usage ADD COLUMN total_tokens_used INTEGER DEFAULT 0"
-                )
+                for name, ddl in missing.items():
+                    conn.exec_driver_sql(f"ALTER TABLE user_usage ADD COLUMN {name} {ddl}")
     except Exception:
         # Table may not exist yet on a brand-new database — create_all above
-        # already created it with the column in that case, so it's safe to
-        # continue rather than crash startup.
+        # already created it with every column in that case, so it's safe
+        # to continue rather than crash startup.
         pass
 
 
@@ -569,14 +586,27 @@ def mark_automation_sent(automation_id: int, sent_at: datetime):
 # (or a runaway conversation) can't run up the whole app's provider bill.
 # ---------------------------------------------------------------------------
 
+# Sentinel stored in `UserUsage.token_limit` meaning "no cap at all" — use
+# this for admin accounts via set_user_token_limit(user_id, UNLIMITED_TOKEN_LIMIT).
+UNLIMITED_TOKEN_LIMIT = -1
 
-def get_usage_status(user_id: str, limit: int, window_seconds: int = 3600):
+
+def get_usage_status(user_id: str, default_limit: int, window_seconds: int = 3600):
     """
-    Returns (allowed: bool, tokens_used: int, seconds_until_reset: int,
-    total_tokens_used: int). `total_tokens_used` is a lifetime counter that
-    the rolling-window reset below never touches. Automatically resets the
-    hourly window if it's been more than window_seconds since it started —
-    callers don't need a separate "reset" step.
+    Returns (allowed, tokens_used, seconds_until_reset, total_tokens_used,
+    effective_limit).
+
+    `default_limit` is the app-wide fallback (HOURLY_TOKEN_LIMIT in app.py).
+    If this user has a per-user override set (see set_user_token_limit),
+    that's used instead — including UNLIMITED_TOKEN_LIMIT, which always
+    reports `allowed=True` regardless of tokens_used. `effective_limit` is
+    whichever limit actually applied, so callers (the /usage route, the
+    chat-lock check) don't need to know about overrides themselves.
+
+    Also auto-resets the hourly window if it's been more than
+    window_seconds since it started — callers don't need a separate
+    "reset" step. `total_tokens_used` is a lifetime counter that this
+    reset never touches.
     """
     db = SessionLocal()
 
@@ -585,7 +615,9 @@ def get_usage_status(user_id: str, limit: int, window_seconds: int = 3600):
         now = datetime.utcnow()
 
         if not usage:
-            usage = UserUsage(user_id=user_id, window_start=now, tokens_used=0, total_tokens_used=0)
+            usage = UserUsage(
+                user_id=user_id, window_start=now, tokens_used=0, total_tokens_used=0, token_limit=None
+            )
             db.add(usage)
             db.commit()
             db.refresh(usage)
@@ -599,8 +631,11 @@ def get_usage_status(user_id: str, limit: int, window_seconds: int = 3600):
             elapsed = 0
 
         seconds_until_reset = max(0, int(window_seconds - elapsed))
-        allowed = usage.tokens_used < limit
-        return allowed, usage.tokens_used, seconds_until_reset, (usage.total_tokens_used or 0)
+        effective_limit = default_limit if usage.token_limit is None else usage.token_limit
+        unlimited = effective_limit == UNLIMITED_TOKEN_LIMIT
+        allowed = True if unlimited else usage.tokens_used < effective_limit
+
+        return allowed, usage.tokens_used, seconds_until_reset, (usage.total_tokens_used or 0), effective_limit
 
     finally:
         db.close()
@@ -617,13 +652,59 @@ def add_usage(user_id: str, tokens: int):
         usage = db.query(UserUsage).filter(UserUsage.user_id == user_id).first()
 
         if not usage:
-            usage = UserUsage(user_id=user_id, window_start=datetime.utcnow(), tokens_used=0, total_tokens_used=0)
+            usage = UserUsage(
+                user_id=user_id, window_start=datetime.utcnow(), tokens_used=0, total_tokens_used=0, token_limit=None
+            )
             db.add(usage)
 
         spent = max(0, tokens)
         usage.tokens_used = (usage.tokens_used or 0) + spent
         usage.total_tokens_used = (usage.total_tokens_used or 0) + spent
         db.commit()
+
+    finally:
+        db.close()
+
+
+def set_user_token_limit(user_id: str, limit: int | None):
+    """
+    Manually override one user's hourly token limit. Creates the user's
+    usage row if it doesn't exist yet, so this works even before they've
+    ever sent a message. Run this from a one-off script or a Python shell —
+    there's no admin UI for it yet.
+
+        set_user_token_limit("user_abc123", 10000)               # raise their cap to 10,000
+        set_user_token_limit("user_admin1", UNLIMITED_TOKEN_LIMIT)  # no cap at all
+        set_user_token_limit("user_abc123", None)                 # back to the app-wide default
+    """
+    db = SessionLocal()
+
+    try:
+        usage = db.query(UserUsage).filter(UserUsage.user_id == user_id).first()
+
+        if not usage:
+            usage = UserUsage(
+                user_id=user_id, window_start=datetime.utcnow(), tokens_used=0, total_tokens_used=0
+            )
+            db.add(usage)
+
+        usage.token_limit = limit
+        db.commit()
+
+    finally:
+        db.close()
+
+
+def get_user_token_limit(user_id: str) -> int | None:
+    """
+    Returns this user's raw override (None if they're on the app-wide
+    default, or UNLIMITED_TOKEN_LIMIT if their cap has been removed).
+    """
+    db = SessionLocal()
+
+    try:
+        usage = db.query(UserUsage).filter(UserUsage.user_id == user_id).first()
+        return usage.token_limit if usage else None
 
     finally:
         db.close()

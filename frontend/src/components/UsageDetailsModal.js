@@ -25,8 +25,8 @@ function formatCountdown(totalSeconds) {
 export default function UsageDetailsModal({ open, onClose, usage, secondsLeft }) {
   if (!open || !usage) return null;
 
-  const { limit, tokens_used: tokensUsed, allowed, total_tokens_used: totalTokensUsed } = usage;
-  const pct = limit ? Math.min(100, Math.round((tokensUsed / limit) * 100)) : 0;
+  const { limit, tokens_used: tokensUsed, allowed, unlimited, total_tokens_used: totalTokensUsed } = usage;
+  const pct = !unlimited && limit ? Math.min(100, Math.round((tokensUsed / limit) * 100)) : 0;
 
   return (
     <div
@@ -50,20 +50,29 @@ export default function UsageDetailsModal({ open, onClose, usage, secondsLeft })
         <div className="space-y-5 px-5 py-5">
           <div>
             <p className="text-[12px] text-[var(--text-muted)]">This hour</p>
-            <p className="mt-1 text-[22px] font-medium tabular-nums text-[var(--text-primary)]">
-              {tokensUsed.toLocaleString()}
-              <span className="text-[14px] font-normal text-[var(--text-muted)]"> / {limit.toLocaleString()} tokens</span>
-            </p>
-            <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-[var(--border-soft)]">
-              <div
-                className={`h-full rounded-full ${pct >= 80 ? "bg-[var(--danger)]" : "bg-[var(--accent)]"}`}
-                style={{ width: `${pct}%` }}
-              />
-            </div>
-            {!allowed && (
-              <p className="mt-2 text-[12px] text-[var(--danger)]">
-                Limit reached — resets in {formatCountdown(secondsLeft)}.
+            {unlimited ? (
+              <p className="mt-1 text-[22px] font-medium tabular-nums text-[var(--text-primary)]">
+                {tokensUsed.toLocaleString()}
+                <span className="text-[14px] font-normal text-[var(--text-muted)]"> tokens · unlimited plan</span>
               </p>
+            ) : (
+              <>
+                <p className="mt-1 text-[22px] font-medium tabular-nums text-[var(--text-primary)]">
+                  {tokensUsed.toLocaleString()}
+                  <span className="text-[14px] font-normal text-[var(--text-muted)]"> / {limit.toLocaleString()} tokens</span>
+                </p>
+                <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-[var(--border-soft)]">
+                  <div
+                    className={`h-full rounded-full ${pct >= 80 ? "bg-[var(--danger)]" : "bg-[var(--accent)]"}`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                {!allowed && (
+                  <p className="mt-2 text-[12px] text-[var(--danger)]">
+                    Limit reached — resets in {formatCountdown(secondsLeft)}.
+                  </p>
+                )}
+              </>
             )}
           </div>
 

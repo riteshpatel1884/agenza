@@ -35,8 +35,23 @@ function formatCompact(n) {
 export default function UsageMeter({ usage, secondsLeft, onClick }) {
   if (!usage) return null;
 
-  const { limit, tokens_used: tokensUsed, allowed } = usage;
-  const pct = limit ? Math.min(100, Math.round((tokensUsed / limit) * 100)) : 0;
+  const { limit, tokens_used: tokensUsed, allowed, unlimited } = usage;
+  const pct = !unlimited && limit ? Math.min(100, Math.round((tokensUsed / limit) * 100)) : 0;
+
+  if (unlimited) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        title={`${tokensUsed.toLocaleString()} tokens used this hour — unlimited plan — tap for details`}
+        className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-2 py-1.5 text-[12px] font-medium text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] sm:px-2.5"
+      >
+        <BoltIcon />
+        <span className="tabular-nums">{formatCompact(tokensUsed)}</span>
+        <span className="hidden sm:inline">· Unlimited</span>
+      </button>
+    );
+  }
 
   if (!allowed) {
     return (

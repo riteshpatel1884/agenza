@@ -41,6 +41,7 @@ from database import (
     save_job_preferences,
     get_usage_status,
     add_usage,
+    UNLIMITED_TOKEN_LIMIT,
 )
 from scheduler import start_scheduler
 
@@ -88,9 +89,18 @@ def approx_token_count(text: str) -> int:
 
 @app.get("/usage")
 async def get_usage_route(user_id: str = Depends(get_current_user_id)):
-    allowed, tokens_used, seconds_until_reset, total_tokens_used = get_usage_status(user_id, HOURLY_TOKEN_LIMIT)
+    allowed, tokens_used, seconds_until_reset, total_tokens_used, limit = get_usage_status(
+        user_id, HOURLY_TOKEN_LIMIT
+    )
+    unlimited = limit == UNLIMITED_TOKEN_LIMIT
     return {
-        "limit": HOURLY_TOKEN_LIMIT,
+        # This is the *effective* limit — the app-wide default unless this
+        # user has a manual override set (see set_user_token_limit in
+        # database.py), in which case that override is returned instead.
+        # Sent as null (not -1) when the user is unlimited, since the
+        # frontend formats this as a plain number.
+        "limit": None if unlimited else limit,
+        "unlimited": unlimited,
         "tokens_used": tokens_used,
         "allowed": allowed,
         "seconds_until_reset": seconds_until_reset,
@@ -415,7 +425,9 @@ async def chat_stream(request: Request, user_id: str = Depends(get_current_user_
     if not user_message.strip():
         return JSONResponse({"error": "Message is required."}, status_code=400)
 
-    allowed, tokens_used, seconds_until_reset, _total_tokens_used = get_usage_status(user_id, HOURLY_TOKEN_LIMIT)
+    allowed, tokens_used, seconds_until_reset, _total_tokens_used, _limit = get_usage_status(
+        user_id, HOURLY_TOKEN_LIMIT
+    )
     if not allowed:
         minutes_left = max(1, (seconds_until_reset + 59) // 60)
 

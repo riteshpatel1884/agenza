@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import time
@@ -26,6 +27,7 @@ from psycopg_pool import ConnectionPool
 
 from email_utils import send_smtp_email
 from jobs import search_adzuna_jobs, JobSearchError
+from job_scoring import score_and_rank_jobs
 
 Path("data").mkdir(exist_ok=True)
 
@@ -240,11 +242,14 @@ def send_email(
 
 # ---------------------------------------------------------------------------
 # Job search tool — lets the agent pull live job listings from Adzuna,
-# scoped to whatever the signed-in user saved in Settings -> Job Search.
+# scoped to whatever the signed-in user saved in Settings -> Job Search,
+# and ranked by relevance against that (plus their resume, if uploaded —
+# see database.Resume / extract_resume_data below and job_scoring.py).
 #
-# Per-user preferences (role, location, day range, min salary, etc.) are
-# threaded in via the run config, same as the SMTP settings above, so the
-# model doesn't need the user to restate them in the chat.
+# Per-user preferences (role, location, day range, min salary, etc.) and
+# the parsed resume are threaded in via the run config, same as the SMTP
+# settings above, so the model doesn't need the user to restate them in
+# the chat.
 #
 # IMPORTANT: the full job list is emitted directly to the frontend via
 # get_stream_writer() (a "custom" stream event app.py forwards as-is) rather
@@ -273,30 +278,40 @@ def search_jobs(
     count: int | None = None,
     config: Annotated[RunnableConfig, InjectedToolArg] = None,
 ) -> str:
-    """Search for current job listings and show them to the user.
+    """Search for current job listings, ranked by relevance, and show them to the user.
 
     Call this whenever the user asks to see, find, or check jobs/openings —
     e.g. "show me jobs", "find backend developer roles", "give me 3 jobs
-    related to SDE", "anything new in the last 2 days". The user's saved Job
-    Search preferences (role, location, country, day range, salary floor,
-    job type, excluded keywords) are applied automatically — you do NOT
-    need to ask the user for these before calling the tool. Only pass
-    `role`, `location`, or `max_days_old` yourself if the user's message
-    explicitly names a different role, place, or day range than what
-    they'd normally have saved; otherwise leave them as None and the saved
-    preferences are used as-is.
+    related to SDE", "anything new in the last 2 days", or "find jobs I'm
+    actually qualified for" (that last phrasing needs no role at all — see
+    below). The user's saved Job Search preferences (role, location,
+    country, day range, salary floor, job type, excluded keywords) are
+    applied automatically — you do NOT need to ask the user for these
+    before calling the tool. Only pass `role`, `location`, or
+    `max_days_old` yourself if the user's message explicitly names a
+    different role, place, or day range than what they'd normally have
+    saved; otherwise leave them as None and the saved preferences are used
+    as-is.
+
+    If the user has uploaded a resume (Settings -> Job Search -> Resume)
+    and hasn't set a role/preference, one of their resume's best-fit roles
+    is used automatically. Either way, every result is scored 0-100 for
+    relevance against the user's search and their resume (skills,
+    experience, location, salary, freshness) and sorted best-match-first —
+    this ranking happens for every search, not just resume-based ones.
 
     IMPORTANT — count: if the user's message asks for a specific number of
     jobs (e.g. "give me 3 jobs", "show me 5 openings", "just 1 is fine"),
     you MUST pass that exact number as `count`. If they didn't mention a
     number, leave `count` as None and their saved default is used.
 
-    The listings themselves are already shown to the user as cards in the
-    UI — do not re-list, re-describe, or repeat any job's title, company,
-    or description back in your reply, since the full data isn't even
-    visible to you. Just give a short one-line summary (how many were
-    found and for what), and only answer a follow-up question about a
-    specific listing if the user asks one directly.
+    The listings themselves (including each one's relevance score) are
+    already shown to the user as cards in the UI — do not re-list,
+    re-describe, or repeat any job's title, company, or description back
+    in your reply, since the full data isn't even visible to you. Just
+    give a short one-line summary (how many were found, for what, and the
+    top match's score if you were told one), and only answer a follow-up
+    question about a specific listing if the user asks one directly.
 
     Args:
         role: Optional override for the job title/keywords to search.
@@ -305,13 +320,24 @@ def search_jobs(
         count: Optional override for how many listings to return, taken
             directly from a number the user mentioned.
     """
-    prefs = ((config or {}).get("configurable") or {}).get("job_preferences") or {}
+    configurable = (config or {}).get("configurable") or {}
+    prefs = configurable.get("job_preferences") or {}
+    resume = configurable.get("resume") or {}
 
     effective_role = (role or prefs.get("role") or "").strip()
+    used_resume_role = False
+
+    if not effective_role:
+        preferred_roles = resume.get("preferred_roles") or []
+        if preferred_roles:
+            effective_role = preferred_roles[0].strip()
+            used_resume_role = True
+
     if not effective_role:
         return (
             "No role to search for. Ask the user to either tell you what "
-            "role/keywords to search, or save a role in Settings -> Job Search."
+            "role/keywords to search, save a role in Settings -> Job Search, "
+            "or upload a resume there so a role can be inferred automatically."
         )
 
     effective_location = (location if location is not None else prefs.get("location")) or ""
@@ -325,6 +351,12 @@ def search_jobs(
 
     job_type = prefs.get("job_type") if prefs.get("job_type") not in (None, "any") else None
 
+    # Fetch a wider pool than requested so relevance ranking has more than
+    # just `requested_count` candidates to actually rank — otherwise
+    # "ranking" the exact N results Adzuna's own date-sort already gave us
+    # wouldn't meaningfully reorder anything.
+    fetch_count = min(_MAX_JOB_COUNT, max(requested_count * 2, requested_count + 10))
+
     try:
         jobs, total_count = search_adzuna_jobs(
             app_id=ADZUNA_APP_ID,
@@ -332,7 +364,7 @@ def search_jobs(
             what=effective_role,
             where=effective_location,
             country=prefs.get("country") or "in",
-            results_per_page=requested_count,
+            results_per_page=fetch_count,
             max_days_old=effective_days,
             min_salary=prefs.get("min_salary"),
             job_type=job_type,
@@ -341,17 +373,26 @@ def search_jobs(
     except JobSearchError as e:
         return str(e)
 
-    # Adzuna's page size is a maximum, not a guarantee — trim defensively in
-    # case it ever returns more than what was actually asked for.
-    jobs = jobs[:requested_count]
+    jobs = score_and_rank_jobs(
+        jobs,
+        role_query=effective_role,
+        wanted_location=effective_location,
+        remote_only=bool(prefs.get("remote_only")),
+        min_salary=prefs.get("min_salary"),
+        max_days_old=effective_days,
+        resume=resume,
+    )[:requested_count]
 
     writer = get_stream_writer()
     writer({"type": "jobs", "jobs": jobs, "count": total_count})
 
     where_note = f" in {effective_location}" if effective_location else ""
+    role_note = f"'{effective_role}'" + (" (inferred from the user's resume)" if used_resume_role else "")
+    top_score_note = f" Top match: {jobs[0]['relevance_score']}%." if jobs else ""
+
     return (
-        f"Found {total_count} job(s) matching '{effective_role}'{where_note}; "
-        f"showing {len(jobs)} to the user."
+        f"Found {total_count} job(s) matching {role_note}{where_note}, ranked by relevance; "
+        f"showing {len(jobs)} to the user.{top_score_note}"
     )
 
 
@@ -426,6 +467,144 @@ def web_search(query: str, max_results: int | None = None) -> str:
 TOOLS = [send_email, search_jobs, web_search]
 
 
+# ---------------------------------------------------------------------------
+# Resume extraction — turns raw resume text (already pulled out of a PDF/
+# DOCX by resume_parsing.py) into the structured shape stored in the
+# database and used for job-relevance scoring (job_scoring.py). This is a
+# plain function, not an @tool — it's called directly from app.py's
+# POST /resume handler at upload time, never by the chat agent itself.
+#
+# Reuses the same provider/key registry as the chat model, but WITHOUT tool
+# binding, since a one-off "extract this JSON" call has no business being
+# able to send emails or search jobs.
+# ---------------------------------------------------------------------------
+
+RESUME_EXTRACTION_PROMPT = """You are a resume parser. Read the resume text below and return ONLY a JSON object (no prose, no markdown code fences) with exactly these keys:
+
+{
+  "skills": ["...", "..."],
+  "experience": [{"title": "...", "company": "...", "years": <number>, "description": "..."}],
+  "education": [{"degree": "...", "institution": "...", "year": "..."}],
+  "projects": [{"name": "...", "description": "..."}],
+  "preferred_roles": ["...", "..."],
+  "experience_years": <total years of professional experience as a number>
+}
+
+Rules:
+- "skills" is a flat, deduplicated list of technical/professional skills (languages, frameworks, tools, methodologies) mentioned anywhere in the resume.
+- "experience" has one entry per job, most recent first. "years" is that specific role's approximate duration (a number, decimals like 1.5 are fine).
+- "preferred_roles" is 2-5 job titles this person is well-suited for based on their actual experience and skills, even if not stated explicitly in the resume.
+- "experience_years" is total professional experience across all roles combined, as a single number.
+- If a section is genuinely absent from the resume, return an empty list for it (or 0 for experience_years). Never invent details the resume doesn't support.
+- Return ONLY the JSON object and nothing else — no markdown fences, no explanation before or after it.
+
+Resume text:
+---
+{resume_text}
+---
+"""
+
+_EMPTY_RESUME_EXTRACTION = {
+    "skills": [],
+    "experience": [],
+    "education": [],
+    "projects": [],
+    "preferred_roles": [],
+    "experience_years": None,
+}
+
+
+def _build_plain_fallback_candidates() -> list[dict]:
+    """Same model/key registry as the chat agent, but with no tools bound —
+    used for one-off structured-extraction calls that shouldn't be able to
+    call send_email/search_jobs/web_search."""
+    candidates = []
+
+    for model_id, info in MODEL_REGISTRY.items():
+        provider = info["provider"]
+        model_name = info["model"]
+
+        for key in PROVIDER_KEY_POOLS[provider].all_keys():
+            llm = _instantiate_chat_model(provider, model_name, key)
+            candidates.append(
+                {"model_id": model_id, "provider": provider, "model": model_name, "key": key, "llm": llm}
+            )
+
+    return candidates
+
+
+def extract_resume_data(resume_text: str) -> dict:
+    """
+    Calls the same configured LLM fallback chain (Groq/Gemini/Mistral, in
+    priority order) to turn raw resume text into the structured shape
+    stored by database.save_resume and consumed by job_scoring.py.
+
+    Falls back to an empty-but-valid shape (see _EMPTY_RESUME_EXTRACTION)
+    if the model registry is empty, every candidate fails, or the model's
+    output isn't parseable JSON — a flaky extraction should never block the
+    upload itself; the user still gets their resume saved (with the raw
+    text) and can re-upload later once the issue's fixed.
+    """
+    resume_text = (resume_text or "").strip()
+    if not resume_text:
+        return dict(_EMPTY_RESUME_EXTRACTION)
+
+    candidates = _build_plain_fallback_candidates()
+    if not candidates:
+        return dict(_EMPTY_RESUME_EXTRACTION)
+
+    llm = FallbackChatModel(candidates)
+    # Truncate very long resumes rather than failing outright -- most of
+    # the signal (skills, most recent roles, education) is near the top.
+    prompt = RESUME_EXTRACTION_PROMPT.replace("{resume_text}", resume_text[:12000])
+
+    try:
+        response = llm.invoke([SystemMessage(content=prompt)])
+        raw_text = (response.content or "").strip()
+    except Exception:
+        return dict(_EMPTY_RESUME_EXTRACTION)
+
+    # Models sometimes wrap JSON in ```json fences despite instructions not to.
+    raw_text = re.sub(r"^```(?:json)?|```$", "", raw_text.strip(), flags=re.MULTILINE).strip()
+
+    try:
+        data = json.loads(raw_text)
+    except (json.JSONDecodeError, ValueError):
+        match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+        if not match:
+            return dict(_EMPTY_RESUME_EXTRACTION)
+        try:
+            data = json.loads(match.group(0))
+        except (json.JSONDecodeError, ValueError):
+            return dict(_EMPTY_RESUME_EXTRACTION)
+
+    if not isinstance(data, dict):
+        return dict(_EMPTY_RESUME_EXTRACTION)
+
+    def _clean_str_list(value) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [str(v).strip() for v in value if str(v).strip()]
+
+    def _clean_dict_list(value) -> list[dict]:
+        return [v for v in value if isinstance(v, dict)] if isinstance(value, list) else []
+
+    experience_years = data.get("experience_years")
+    try:
+        experience_years = float(experience_years) if experience_years is not None else None
+    except (TypeError, ValueError):
+        experience_years = None
+
+    return {
+        "skills": _clean_str_list(data.get("skills")),
+        "experience": _clean_dict_list(data.get("experience")),
+        "education": _clean_dict_list(data.get("education")),
+        "projects": _clean_dict_list(data.get("projects")),
+        "preferred_roles": _clean_str_list(data.get("preferred_roles")),
+        "experience_years": experience_years,
+    }
+
+
 SYSTEM_PROMPT = """
 You are a helpful AI assistant with access to tools. Answer clearly, concisely, and honestly.
 If you are not sure about something, say so instead of guessing.
@@ -443,10 +622,16 @@ check jobs/openings, call it directly — their saved Job Search preferences
 are applied automatically, so don't ask them to repeat their role or
 location first unless the tool tells you none is saved. If the user's
 message names a specific number of jobs (e.g. "3 jobs", "just 2"), always
-pass that number as the tool's `count` argument. The job listings
-themselves are rendered to the user separately as cards, and you are not
-given their contents back — keep your reply to a short one-line summary
-rather than listing or describing the jobs yourself.
+pass that number as the tool's `count` argument. If the user asks something
+like "find jobs I'm actually qualified for" or "what jobs fit my
+background" without naming a role, still call the tool with no `role` —
+if they've uploaded a resume, it infers one automatically. Every result is
+already ranked by a relevance score (skills, experience, location, salary,
+and freshness against their search and resume) before it reaches you. The
+job listings themselves are rendered to the user separately as cards, and
+you are not given their contents back — keep your reply to a short
+one-line summary (mentioning the top match's score if the tool told you
+one) rather than listing or describing the jobs yourself.
 
 You also have a web_search tool for current, real-world information —
 news, prices, recent events, or anything you can't confidently answer

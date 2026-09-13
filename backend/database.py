@@ -1,3 +1,4 @@
+import json
 import os
 from datetime import datetime
 
@@ -6,6 +7,7 @@ from sqlalchemy import (
     create_engine,
     Column,
     Integer,
+    Float,
     String,
     Text,
     DateTime,
@@ -149,6 +151,38 @@ class JobPreferences(Base):
     job_type = Column(String, default="any")  # any | full_time | part_time | contract | permanent
     remote_only = Column(Integer, default=0)  # 1/0
     keywords_exclude = Column(String, default="")  # comma-separated terms to filter out
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Resume(Base):
+    """
+    One parsed resume per user, uploaded through Settings -> Job Search ->
+    Resume. `raw_text` is kept alongside the structured fields so the
+    resume can be re-parsed later (e.g. after the extraction prompt gets
+    better) without asking the user to re-upload it.
+
+    Structured fields are stored as JSON text rather than a JSON column —
+    this data is small, read-mostly, and this keeps the same simple-column
+    pattern as everywhere else in this file, without needing a JSON-capable
+    column type on every backend this might run on.
+
+    Read by agent.py's search_jobs tool (as `resume` in the run config) to
+    infer a role when none is given, and by job_scoring.py to score every
+    listing's Skills Match / Experience Match against this data.
+    """
+
+    __tablename__ = "resumes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, unique=True, index=True)
+    filename = Column(String, default="")
+    raw_text = Column(Text, default="")
+    skills_json = Column(Text, default="[]")  # JSON list[str]
+    experience_json = Column(Text, default="[]")  # JSON list[{title, company, years, description}]
+    education_json = Column(Text, default="[]")  # JSON list[{degree, institution, year}]
+    projects_json = Column(Text, default="[]")  # JSON list[{name, description}]
+    preferred_roles_json = Column(Text, default="[]")  # JSON list[str], best-fit job titles
+    experience_years = Column(Float, nullable=True)  # total years of experience, best estimate
     updated_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -568,7 +602,105 @@ def save_job_preferences(
         db.close()
 
 
-def mark_automation_sent(automation_id: int, sent_at: datetime):
+# ---------------------------------------------------------------------------
+# Resume — one per user, uploaded through Settings -> Job Search -> Resume.
+# Parsed by agent.extract_resume_data at upload time; read back here by
+# app.py to thread into the chat agent's run config (same pattern as
+# EmailSettings/JobPreferences above) and to power job_scoring.py.
+# ---------------------------------------------------------------------------
+
+
+def get_resume(user_id: str):
+    db = SessionLocal()
+
+    try:
+        return db.query(Resume).filter(Resume.user_id == user_id).first()
+
+    finally:
+        db.close()
+
+
+def save_resume(
+    user_id: str,
+    *,
+    filename: str = "",
+    raw_text: str = "",
+    skills: list | None = None,
+    experience: list | None = None,
+    education: list | None = None,
+    projects: list | None = None,
+    preferred_roles: list | None = None,
+    experience_years: float | None = None,
+):
+    """Creates or overwrites the signed-in user's single stored resume."""
+    db = SessionLocal()
+
+    try:
+        resume = db.query(Resume).filter(Resume.user_id == user_id).first()
+
+        if not resume:
+            resume = Resume(user_id=user_id)
+            db.add(resume)
+
+        resume.filename = filename or ""
+        resume.raw_text = raw_text or ""
+        resume.skills_json = json.dumps(skills or [])
+        resume.experience_json = json.dumps(experience or [])
+        resume.education_json = json.dumps(education or [])
+        resume.projects_json = json.dumps(projects or [])
+        resume.preferred_roles_json = json.dumps(preferred_roles or [])
+        resume.experience_years = experience_years
+        resume.updated_at = datetime.utcnow()
+
+        db.commit()
+        db.refresh(resume)
+        return resume
+
+    finally:
+        db.close()
+
+
+def delete_resume(user_id: str) -> bool:
+    db = SessionLocal()
+
+    try:
+        resume = db.query(Resume).filter(Resume.user_id == user_id).first()
+        if not resume:
+            return False
+        db.delete(resume)
+        db.commit()
+        return True
+
+    finally:
+        db.close()
+
+
+def resume_to_dict(resume) -> dict | None:
+    """
+    Deserializes a Resume row into the plain dict shape used both by the
+    /resume API response and by the `resume` entry in the chat agent's run
+    config. Returns None for "no resume uploaded yet" so callers can do
+    `if resume_dict:` instead of checking for a specific sentinel shape.
+    """
+    if not resume:
+        return None
+
+    def _load(raw_json):
+        try:
+            return json.loads(raw_json or "[]")
+        except (TypeError, ValueError):
+            return []
+
+    return {
+        "filename": resume.filename or "",
+        "skills": _load(resume.skills_json),
+        "experience": _load(resume.experience_json),
+        "education": _load(resume.education_json),
+        "projects": _load(resume.projects_json),
+        "preferred_roles": _load(resume.preferred_roles_json),
+        "experience_years": resume.experience_years,
+        "updated_at": resume.updated_at.isoformat() if resume.updated_at else None,
+    }
     db = SessionLocal()
 
     try:

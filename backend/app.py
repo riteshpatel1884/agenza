@@ -12,7 +12,7 @@ import logging
 from pathlib import Path
 
 import uvicorn
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, File, Request, UploadFile
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -20,7 +20,7 @@ from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk
 
 logger = logging.getLogger("agenza")
 
-from agent import get_agent
+from agent import get_agent, extract_resume_data
 from auth import get_current_user_id
 from database import (
     init_db,
@@ -39,10 +39,15 @@ from database import (
     delete_automation,
     get_job_preferences,
     save_job_preferences,
+    get_resume,
+    save_resume,
+    delete_resume,
+    resume_to_dict,
     get_usage_status,
     add_usage,
     UNLIMITED_TOKEN_LIMIT,
 )
+from resume_parsing import extract_text_from_upload, validate_upload, UnsupportedResumeFormat
 from scheduler import start_scheduler
 
 Path("data").mkdir(exist_ok=True)
@@ -310,6 +315,67 @@ async def save_job_preferences_route(request: Request, user_id: str = Depends(ge
     return {"configured": True, **_job_preferences_to_dict(prefs)}
 
 
+# ---------------------------------------------------------------------------
+# Resume — upload once, parsed into structured skills/experience/education/
+# projects/preferred_roles (see agent.extract_resume_data), then used
+# automatically by search_jobs (to infer a role when none is set, and to
+# score every listing's relevance — see job_scoring.py) without the user
+# ever pasting it into the chat.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/resume")
+async def get_resume_route(user_id: str = Depends(get_current_user_id)):
+    data = resume_to_dict(get_resume(user_id))
+
+    if not data:
+        return {"configured": False}
+
+    return {"configured": True, **data}
+
+
+@app.post("/resume")
+async def upload_resume_route(file: UploadFile = File(...), user_id: str = Depends(get_current_user_id)):
+    content = await file.read()
+
+    try:
+        validate_upload(file.filename, content)
+    except UnsupportedResumeFormat as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+    text = extract_text_from_upload(file.filename, content)
+    if not text.strip():
+        return JSONResponse(
+            {
+                "error": "Couldn't read any text out of that file — try a different PDF/DOCX export, "
+                "or paste the resume into a .txt file and upload that instead."
+            },
+            status_code=400,
+        )
+
+    extracted = extract_resume_data(text)
+
+    resume = save_resume(
+        user_id,
+        filename=file.filename or "resume",
+        raw_text=text,
+        skills=extracted["skills"],
+        experience=extracted["experience"],
+        education=extracted["education"],
+        projects=extracted["projects"],
+        preferred_roles=extracted["preferred_roles"],
+        experience_years=extracted["experience_years"],
+    )
+
+    return {"configured": True, **resume_to_dict(resume)}
+
+
+@app.delete("/resume")
+async def delete_resume_route(user_id: str = Depends(get_current_user_id)):
+    delete_resume(user_id)
+    return {"configured": False}
+
+
 def _automation_to_dict(a):
     return {
         "id": a.id,
@@ -485,6 +551,13 @@ async def chat_stream(request: Request, user_id: str = Depends(get_current_user_
             "remote_only": bool(job_prefs.remote_only),
             "keywords_exclude": job_prefs.keywords_exclude,
         }
+
+    resume_dict = resume_to_dict(get_resume(user_id))
+    if resume_dict:
+        # search_jobs (agent.py) uses this to infer a role when the user
+        # hasn't set one, and job_scoring.py uses it to score every
+        # listing's Skills Match / Experience Match.
+        configurable["resume"] = resume_dict
 
     config = {"configurable": configurable}
 

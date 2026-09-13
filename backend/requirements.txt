@@ -36,3 +36,5 @@ pypdf
 apscheduler
 langgraph-checkpoint-postgres
 psycopg[binary]
+pypdf 
+python-docx

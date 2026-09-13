@@ -15,6 +15,11 @@ function formatCountdown(totalSeconds) {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
+function formatCompact(n) {
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
+  return String(n);
+}
+
 /**
  * Small pill showing "tokens used / hourly limit". Turns into a countdown
  * once the user has hit their hourly budget (see /usage in app.py) — the
@@ -46,7 +51,7 @@ export default function UsageMeter({ usage, secondsLeft }) {
   return (
     <div
       title={`${tokensUsed.toLocaleString()} / ${limit.toLocaleString()} tokens used this hour`}
-      className={`hidden items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[12px] font-medium sm:flex ${
+      className={`flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-[12px] font-medium sm:px-2.5 ${
         nearLimit
           ? "border-[var(--danger)]/40 text-[var(--danger)]"
           : "border-[var(--border)] text-[var(--text-muted)]"
@@ -54,7 +59,10 @@ export default function UsageMeter({ usage, secondsLeft }) {
     >
       <BoltIcon />
       <span className="tabular-nums">
-        {tokensUsed.toLocaleString()} / {limit.toLocaleString()}
+        <span className="sm:hidden">{formatCompact(tokensUsed)}/{formatCompact(limit)}</span>
+        <span className="hidden sm:inline">
+          {tokensUsed.toLocaleString()} / {limit.toLocaleString()}
+        </span>
       </span>
     </div>
   );

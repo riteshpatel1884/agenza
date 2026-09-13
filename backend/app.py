@@ -79,7 +79,7 @@ start_scheduler()
 # anyway. This is intentionally a soft safety net, not a billing meter.
 # ---------------------------------------------------------------------------
 
-HOURLY_TOKEN_LIMIT = int(os.getenv("HOURLY_TOKEN_LIMIT", "20000"))
+HOURLY_TOKEN_LIMIT = int(os.getenv("HOURLY_TOKEN_LIMIT", "2500"))
 
 
 def approx_token_count(text: str) -> int:

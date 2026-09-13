@@ -101,6 +101,23 @@ class EmailAutomation(Base):
     last_sent_at = Column(DateTime, nullable=True)
 
 
+class UserUsage(Base):
+    """
+    A rolling hourly token budget per user, used to rate-limit chat usage.
+    `tokens_used` is an approximation (see approx_token_count in app.py) —
+    good enough to catch runaway usage without needing a provider-specific
+    tokenizer for every model in the registry. The window resets itself the
+    next time it's checked after `window_start` is more than an hour old.
+    """
+
+    __tablename__ = "user_usage"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, unique=True, index=True)
+    window_start = Column(DateTime, default=datetime.utcnow)
+    tokens_used = Column(Integer, default=0)
+
+
 class JobPreferences(Base):
     """
     Per-user job-search preferences, entered through the Settings modal.
@@ -510,6 +527,64 @@ def mark_automation_sent(automation_id: int, sent_at: datetime):
         if automation:
             automation.last_sent_at = sent_at
             db.commit()
+
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Per-user hourly token usage — a soft rate limit so one user's heavy usage
+# (or a runaway conversation) can't run up the whole app's provider bill.
+# ---------------------------------------------------------------------------
+
+
+def get_usage_status(user_id: str, limit: int, window_seconds: int = 3600):
+    """
+    Returns (allowed: bool, tokens_used: int, seconds_until_reset: int).
+    Automatically resets the window if it's been more than window_seconds
+    since it started — callers don't need a separate "reset" step.
+    """
+    db = SessionLocal()
+
+    try:
+        usage = db.query(UserUsage).filter(UserUsage.user_id == user_id).first()
+        now = datetime.utcnow()
+
+        if not usage:
+            usage = UserUsage(user_id=user_id, window_start=now, tokens_used=0)
+            db.add(usage)
+            db.commit()
+            db.refresh(usage)
+
+        elapsed = (now - usage.window_start).total_seconds()
+
+        if elapsed >= window_seconds:
+            usage.window_start = now
+            usage.tokens_used = 0
+            db.commit()
+            elapsed = 0
+
+        seconds_until_reset = max(0, int(window_seconds - elapsed))
+        allowed = usage.tokens_used < limit
+        return allowed, usage.tokens_used, seconds_until_reset
+
+    finally:
+        db.close()
+
+
+def add_usage(user_id: str, tokens: int):
+    """Adds to this user's usage counter for the current window."""
+    db = SessionLocal()
+
+    try:
+        usage = db.query(UserUsage).filter(UserUsage.user_id == user_id).first()
+
+        if not usage:
+            usage = UserUsage(user_id=user_id, window_start=datetime.utcnow(), tokens_used=0)
+            db.add(usage)
+
+        usage.tokens_used = (usage.tokens_used or 0) + max(0, tokens)
+        db.commit()
 
     finally:
         db.close()

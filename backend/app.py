@@ -8,6 +8,7 @@ os.environ["SSL_CERT_FILE"] = certifi.where()
 os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 
 import json
+import logging
 from pathlib import Path
 
 import uvicorn
@@ -15,7 +16,9 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk, ToolMessage
+from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk
+
+logger = logging.getLogger("agenza")
 
 from agent import get_agent, list_models, DEFAULT_MODEL_ID
 from auth import get_current_user_id
@@ -36,6 +39,8 @@ from database import (
     delete_automation,
     get_job_preferences,
     save_job_preferences,
+    get_usage_status,
+    add_usage,
 )
 from scheduler import start_scheduler
 
@@ -61,6 +66,35 @@ app.add_middleware(
 
 init_db()
 start_scheduler()
+
+# ---------------------------------------------------------------------------
+# Hourly token budget per user — a soft rate limit so one heavy user or one
+# runaway conversation can't run up the whole app's provider bill. Override
+# via HOURLY_TOKEN_LIMIT in .env; defaults to a conservative 20,000.
+#
+# Usage is approximated as len(text) // 4 (a common rule of thumb for
+# English text) rather than counted with a real tokenizer — the providers
+# in this app's model registry (Gemini, Groq, Mistral) each tokenize
+# differently, so no single exact count would be correct for all of them
+# anyway. This is intentionally a soft safety net, not a billing meter.
+# ---------------------------------------------------------------------------
+
+HOURLY_TOKEN_LIMIT = int(os.getenv("HOURLY_TOKEN_LIMIT", "20000"))
+
+
+def approx_token_count(text: str) -> int:
+    return max(1, len(text) // 4)
+
+
+@app.get("/usage")
+async def get_usage_route(user_id: str = Depends(get_current_user_id)):
+    allowed, tokens_used, seconds_until_reset = get_usage_status(user_id, HOURLY_TOKEN_LIMIT)
+    return {
+        "limit": HOURLY_TOKEN_LIMIT,
+        "tokens_used": tokens_used,
+        "allowed": allowed,
+        "seconds_until_reset": seconds_until_reset,
+    }
 
 
 @app.get("/models")
@@ -385,6 +419,28 @@ async def chat_stream(request: Request, user_id: str = Depends(get_current_user_
     if not user_message.strip():
         return JSONResponse({"error": "Message is required."}, status_code=400)
 
+    allowed, tokens_used, seconds_until_reset = get_usage_status(user_id, HOURLY_TOKEN_LIMIT)
+    if not allowed:
+        minutes_left = max(1, (seconds_until_reset + 59) // 60)
+
+        def blocked_stream():
+            yield sse_data(
+                {
+                    "error": (
+                        f"You've reached your usage limit for this hour. "
+                        f"Please try again in about {minutes_left} minute"
+                        f"{'s' if minutes_left != 1 else ''}."
+                    )
+                }
+            )
+            yield sse_data({"done": True})
+
+        return StreamingResponse(
+            blocked_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+        )
+
     try:
         agent = get_agent(selected_model)
     except ValueError as e:
@@ -430,20 +486,19 @@ async def chat_stream(request: Request, user_id: str = Depends(get_current_user_
         try:
             inputs = {"messages": [HumanMessage(content=user_message)]}
 
-            for chunk, metadata in agent.stream(inputs, config=config, stream_mode="messages"):
-                # search_jobs returns a JSON blob (see agent.py) rather than
-                # something the model should retype as text — forward it to
-                # the frontend directly as a "jobs" event so it renders as
-                # cards, instead of letting it flow into the token stream.
-                if isinstance(chunk, ToolMessage) and chunk.name == "search_jobs":
-                    try:
-                        parsed = json.loads(chunk.content)
-                    except (TypeError, ValueError):
-                        parsed = None
-
-                    if parsed and isinstance(parsed.get("jobs"), list):
-                        yield sse_data({"jobs": parsed["jobs"], "count": parsed.get("count")})
+            # "messages" streams token-by-token AI output as before.
+            # "custom" carries the job-search tool's full results, emitted
+            # via get_stream_writer() in agent.py rather than stored in
+            # conversation memory — see the comment above search_jobs.
+            for stream_mode, payload in agent.stream(
+                inputs, config=config, stream_mode=["messages", "custom"]
+            ):
+                if stream_mode == "custom":
+                    if isinstance(payload, dict) and payload.get("type") == "jobs":
+                        yield sse_data({"jobs": payload.get("jobs", []), "count": payload.get("count")})
                     continue
+
+                chunk, metadata = payload
 
                 if not should_stream_chunk(chunk):
                     continue
@@ -457,10 +512,20 @@ async def chat_stream(request: Request, user_id: str = Depends(get_current_user_
             if final_answer.strip():
                 save_chat_message(user_id, thread_id, "assistant", final_answer)
 
+            tokens_spent = approx_token_count(user_message) + approx_token_count(final_answer)
+            add_usage(user_id, tokens_spent)
+
             yield sse_data({"done": True})
 
-        except Exception as e:
-            yield sse_data({"error": str(e)})
+        except Exception:
+            # Never forward raw provider/SDK exception text to the client —
+            # it can include internal identifiers (org IDs, billing links)
+            # and isn't something a user can act on anyway. Full details go
+            # to the server log for debugging.
+            logger.exception("chat_stream failed for user_id=%s thread_id=%s", user_id, thread_id)
+            yield sse_data(
+                {"error": "Something went wrong while generating a response. Please try again in a moment."}
+            )
             yield sse_data({"done": True})
 
     return StreamingResponse(

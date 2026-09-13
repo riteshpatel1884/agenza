@@ -89,7 +89,7 @@ def search_adzuna_jobs(
                 "title": (item.get("title") or "").strip(),
                 "company": (item.get("company") or {}).get("display_name", "Unknown company"),
                 "location": (item.get("location") or {}).get("display_name", ""),
-                "description": (item.get("description") or "").strip(),
+                "description": (item.get("description") or "").strip()[:600],
                 "url": item.get("redirect_url", ""),
                 "created": item.get("created", ""),
                 "salary_min": item.get("salary_min"),

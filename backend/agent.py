@@ -1,4 +1,3 @@
-import json
 import os
 import re
 from pathlib import Path
@@ -19,6 +18,7 @@ from langchain_core.tools import tool, InjectedToolArg
 from langgraph.graph import StateGraph, START, MessagesState
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.config import get_stream_writer
 from psycopg_pool import ConnectionPool
 
 from email_utils import send_smtp_email
@@ -227,14 +227,25 @@ def send_email(
 #
 # Per-user preferences (role, location, day range, min salary, etc.) are
 # threaded in via the run config, same as the SMTP settings above, so the
-# model doesn't need the user to restate them in the chat. The tool result
-# is a JSON string; app.py detects it by tool name and forwards it to the
-# frontend as a dedicated "jobs" SSE event so it renders as job cards
-# instead of being retyped by the model as plain text.
+# model doesn't need the user to restate them in the chat.
+#
+# IMPORTANT: the full job list is emitted directly to the frontend via
+# get_stream_writer() (a "custom" stream event app.py forwards as-is) rather
+# than being returned as this tool's result. A tool's return value becomes a
+# ToolMessage that's permanently stored in the conversation's checkpointed
+# history — if that message contained the full job list (with long
+# descriptions), every future turn in the same chat would re-send that
+# entire payload back to the model, growing the prompt each time you search
+# again until it blows past the provider's token-per-minute limit. Returning
+# a short summary instead keeps conversation memory small no matter how many
+# searches happen in one chat.
 # ---------------------------------------------------------------------------
 
 ADZUNA_APP_ID = os.getenv("ADZUNA_APP_ID")
 ADZUNA_APP_KEY = os.getenv("ADZUNA_APP_KEY")
+
+_DEFAULT_JOB_COUNT = 10
+_MAX_JOB_COUNT = 50
 
 
 @tool
@@ -242,31 +253,40 @@ def search_jobs(
     role: str | None = None,
     location: str | None = None,
     max_days_old: int | None = None,
+    count: int | None = None,
     config: Annotated[RunnableConfig, InjectedToolArg] = None,
 ) -> str:
-    """Search for current job listings and return them to the user.
+    """Search for current job listings and show them to the user.
 
     Call this whenever the user asks to see, find, or check jobs/openings —
-    e.g. "show me jobs", "find backend developer roles", "anything new in
-    the last 2 days", "jobs for today". The user's saved Job Search
-    preferences (role, location, country, day range, salary floor, job
-    type, excluded keywords) are applied automatically — you do NOT need to
-    ask the user for these before calling the tool. Only pass `role`,
-    `location`, or `max_days_old` yourself if the user's message explicitly
-    names a different role, place, or day range than what they'd normally
-    have saved; otherwise leave them as None and the saved preferences are
-    used as-is.
+    e.g. "show me jobs", "find backend developer roles", "give me 3 jobs
+    related to SDE", "anything new in the last 2 days". The user's saved Job
+    Search preferences (role, location, country, day range, salary floor,
+    job type, excluded keywords) are applied automatically — you do NOT
+    need to ask the user for these before calling the tool. Only pass
+    `role`, `location`, or `max_days_old` yourself if the user's message
+    explicitly names a different role, place, or day range than what
+    they'd normally have saved; otherwise leave them as None and the saved
+    preferences are used as-is.
 
-    The tool returns a JSON string. The listings themselves are already
-    shown to the user as cards in the UI — do not re-list or re-describe
-    each job in your reply. Just give a short one-line summary (how many
-    were found, anything notable), and only go into detail on a specific
-    job if the user asks a follow-up question about it.
+    IMPORTANT — count: if the user's message asks for a specific number of
+    jobs (e.g. "give me 3 jobs", "show me 5 openings", "just 1 is fine"),
+    you MUST pass that exact number as `count`. If they didn't mention a
+    number, leave `count` as None and their saved default is used.
+
+    The listings themselves are already shown to the user as cards in the
+    UI — do not re-list, re-describe, or repeat any job's title, company,
+    or description back in your reply, since the full data isn't even
+    visible to you. Just give a short one-line summary (how many were
+    found and for what), and only answer a follow-up question about a
+    specific listing if the user asks one directly.
 
     Args:
         role: Optional override for the job title/keywords to search.
         location: Optional override for the city/region ("Remote" is fine).
         max_days_old: Optional override for how many days back to search.
+        count: Optional override for how many listings to return, taken
+            directly from a number the user mentioned.
     """
     prefs = ((config or {}).get("configurable") or {}).get("job_preferences") or {}
 
@@ -282,6 +302,10 @@ def search_jobs(
         effective_location = "Remote"
 
     effective_days = max_days_old or prefs.get("max_days_old") or 3
+
+    requested_count = count or prefs.get("results_per_page") or _DEFAULT_JOB_COUNT
+    requested_count = max(1, min(int(requested_count), _MAX_JOB_COUNT))
+
     job_type = prefs.get("job_type") if prefs.get("job_type") not in (None, "any") else None
 
     try:
@@ -291,7 +315,7 @@ def search_jobs(
             what=effective_role,
             where=effective_location,
             country=prefs.get("country") or "in",
-            results_per_page=prefs.get("results_per_page") or 15,
+            results_per_page=requested_count,
             max_days_old=effective_days,
             min_salary=prefs.get("min_salary"),
             job_type=job_type,
@@ -300,12 +324,17 @@ def search_jobs(
     except JobSearchError as e:
         return str(e)
 
-    return json.dumps(
-        {
-            "jobs": jobs,
-            "count": total_count,
-            "query": {"role": effective_role, "location": effective_location, "max_days_old": effective_days},
-        }
+    # Adzuna's page size is a maximum, not a guarantee — trim defensively in
+    # case it ever returns more than what was actually asked for.
+    jobs = jobs[:requested_count]
+
+    writer = get_stream_writer()
+    writer({"type": "jobs", "jobs": jobs, "count": total_count})
+
+    where_note = f" in {effective_location}" if effective_location else ""
+    return (
+        f"Found {total_count} job(s) matching '{effective_role}'{where_note}; "
+        f"showing {len(jobs)} to the user."
     )
 
 
@@ -327,9 +356,12 @@ Settings -> Email.
 You also have a search_jobs tool. When the user asks to see, find, or
 check jobs/openings, call it directly — their saved Job Search preferences
 are applied automatically, so don't ask them to repeat their role or
-location first unless the tool tells you none is saved. The job listings
-themselves are rendered to the user separately as cards, so keep your
-reply to a short one-line summary rather than listing the jobs yourself.
+location first unless the tool tells you none is saved. If the user's
+message names a specific number of jobs (e.g. "3 jobs", "just 2"), always
+pass that number as the tool's `count` argument. The job listings
+themselves are rendered to the user separately as cards, and you are not
+given their contents back — keep your reply to a short one-line summary
+rather than listing or describing the jobs yourself.
 """
 
 

@@ -538,6 +538,20 @@ def list_enabled_automations():
         db.close()
 
 
+def mark_automation_sent(automation_id: int, sent_at: datetime):
+    """Called by the scheduler right after an automation's email goes out."""
+    db = SessionLocal()
+
+    try:
+        automation = db.query(EmailAutomation).filter(EmailAutomation.id == automation_id).first()
+        if automation:
+            automation.last_sent_at = sent_at
+            db.commit()
+
+    finally:
+        db.close()
+
+
 # ---------------------------------------------------------------------------
 # Job search preferences — keyed by Clerk user id, same pattern as
 # EmailSettings above. Read by agent.py's search_jobs tool at call time.
@@ -701,16 +715,6 @@ def resume_to_dict(resume) -> dict | None:
         "experience_years": resume.experience_years,
         "updated_at": resume.updated_at.isoformat() if resume.updated_at else None,
     }
-    db = SessionLocal()
-
-    try:
-        automation = db.query(EmailAutomation).filter(EmailAutomation.id == automation_id).first()
-        if automation:
-            automation.last_sent_at = sent_at
-            db.commit()
-
-    finally:
-        db.close()
 
 
 # ---------------------------------------------------------------------------

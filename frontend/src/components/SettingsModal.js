@@ -241,7 +241,7 @@ export default function SettingsModal({
     location: "",
     country: "in",
     max_days_old: 3,
-    results_per_page: 40,
+    results_per_page: 15,
     min_salary: "",
     job_type: "any",
     remote_only: false,
@@ -266,7 +266,7 @@ export default function SettingsModal({
             location: data.location || "",
             country: data.country || "in",
             max_days_old: data.max_days_old ?? 3,
-            results_per_page: data.results_per_page ?? 40,
+            results_per_page: data.results_per_page ?? 15,
             min_salary: data.min_salary ?? "",
             job_type: data.job_type || "any",
             remote_only: !!data.remote_only,
@@ -406,7 +406,7 @@ export default function SettingsModal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="w-full max-w-md overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-elevated)] shadow-[var(--shadow-dropdown)]">
+      <div className="w-full max-w-md overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-elevated)] shadow-[var(--shadow-dropdown)] sm:max-w-2xl lg:max-w-3xl">
         <div className="flex items-center justify-between border-b border-[var(--border-soft)] px-5 py-4">
           <h2 className="text-[15px] font-medium text-[var(--text-primary)]">Customize Nova</h2>
           <button
@@ -1034,10 +1034,10 @@ export default function SettingsModal({
                         onChange={(e) => setJobPrefs((f) => ({ ...f, results_per_page: Number(e.target.value) }))}
                         className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
                       >
-                        <option value={20}>20</option>
-                        <option value={40}>40</option>
-                        <option value={60}>60</option>
-                        <option value={100}>100</option>
+                        <option value={10}>10</option>
+                        <option value={15}>15</option>
+                        <option value={25}>25</option>
+                        <option value={50}>50</option>
                       </select>
                     </div>
                   </div>

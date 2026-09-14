@@ -324,8 +324,14 @@ export default function Home() {
 
   const chatLocked = Boolean(usage && !usage.allowed);
 
-  const hasCustomBackground = chatBackground?.type && chatBackground.type !== "none";
-  const mainStyle = backgroundToStyle(chatBackground);
+  // A custom background is only ever shown in light mode. Its colors are
+  // fixed pastel hex values with no dark equivalent, so trying to keep it
+  // visible in dark mode either looked unchanged (defeating the toggle) or
+  // needed a muddy tint over a busy pattern. Dark mode now always wins and
+  // shows the normal clean dark canvas — the wallpaper reappears exactly as
+  // chosen the moment you switch back to light.
+  const hasCustomBackground = theme === "light" && chatBackground?.type && chatBackground.type !== "none";
+  const mainStyle = theme === "dark" ? {} : backgroundToStyle(chatBackground);
 
   // Middleware already redirects signed-out visitors to /sign-in, so this is
   // just the brief flash while Clerk confirms the session client-side.
@@ -351,8 +357,8 @@ export default function Home() {
         onCloseMobile={() => setMobileSidebarOpen(false)}
       />
 
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="sticky top-0 z-20 flex shrink-0 items-center justify-between gap-2 border-b border-[var(--border)] bg-[var(--bg-canvas)] px-3 py-3 sm:px-6 sm:py-3.5">
+      <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--bg-canvas)]" style={mainStyle}>
+        <header className="sticky top-0 z-20 flex shrink-0 items-center justify-between gap-2 border-b border-[var(--border)] px-3 py-3 backdrop-blur-md sm:px-6 sm:py-3.5">
           <div className="flex min-w-0 items-center gap-1.5">
             <button
               onClick={() => setMobileSidebarOpen(true)}
@@ -387,7 +393,7 @@ export default function Home() {
           </div>
         </header>
 
-        <main className="scroll-theme flex-1 overflow-y-auto overscroll-contain" style={mainStyle}>
+        <main className="scroll-theme relative z-10 flex-1 overflow-y-auto overscroll-contain">
           {messages.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center px-4 text-center sm:px-6">
               <h1 className="text-[22px] font-medium tracking-tight text-[var(--text-primary)] sm:text-[26px]">
@@ -425,16 +431,18 @@ export default function Home() {
           )}
         </main>
 
-        {(errorMsg || chatLocked) && (
-          <div className="mx-auto flex w-full max-w-2xl items-center gap-2 px-4 pb-2 text-[13px] text-[var(--danger)]">
-            <AlertIcon />
-            {chatLocked
-              ? `You've reached your hourly usage limit. Chat unlocks again in ${formatCountdown(secondsLeft)}.`
-              : errorMsg}
-          </div>
-        )}
+        <div className="relative z-10">
+          {(errorMsg || chatLocked) && (
+            <div className="mx-auto flex w-full max-w-2xl items-center gap-2 px-4 pb-2 text-[13px] text-[var(--danger)]">
+              <AlertIcon />
+              {chatLocked
+                ? `You've reached your hourly usage limit. Chat unlocks again in ${formatCountdown(secondsLeft)}.`
+                : errorMsg}
+            </div>
+          )}
 
-        <ChatInput onSend={handleSend} disabled={isStreaming || chatLocked} />
+          <ChatInput onSend={handleSend} disabled={isStreaming || chatLocked} />
+        </div>
       </div>
 
       <SettingsModal

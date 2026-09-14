@@ -109,15 +109,17 @@ function emojiTile(emoji, { tile = 48, size = 22, opacity = 0.5 } = {}) {
 
 // Chat-area backgrounds, in the spirit of a messaging app's wallpaper picker.
 // Each entry carries a `group` used to organize the picker into sections.
+//
+// Pruned the near-duplicate pastel tints/gradients and the generic emoji
+// wallpapers that all read the same at a glance, and added a handful of
+// higher-signature options (Matrix Rain, Terminal, Tokyo Nights, Northern
+// Lights) that fit an AI/dev-tool audience and actually look distinct from
+// one another in the picker.
 export const BACKGROUND_PRESETS = [
   // --- Simple: flat tints and soft gradients -------------------------------
   { id: "none", label: "Default", type: "none", group: "Simple" },
   { id: "warm-sand", label: "Sand", type: "color", value: "#f1ece0", group: "Simple" },
-  { id: "soft-sage", label: "Sage", type: "color", value: "#e7efe6", group: "Simple" },
   { id: "sky", label: "Sky", type: "color", value: "#e6eef7", group: "Simple" },
-  { id: "blush", label: "Blush", type: "color", value: "#f6e9e9", group: "Simple" },
-  { id: "lavender", label: "Lavender", type: "color", value: "#efe7f6", group: "Simple" },
-  { id: "peach", label: "Peach", type: "color", value: "#fbe8dd", group: "Simple" },
   {
     id: "dusk",
     label: "Dusk",
@@ -126,24 +128,10 @@ export const BACKGROUND_PRESETS = [
     group: "Simple",
   },
   {
-    id: "linen",
-    label: "Linen",
-    type: "gradient",
-    value: "linear-gradient(160deg, #f4efe4 0%, #ece2ce 100%)",
-    group: "Simple",
-  },
-  {
     id: "aurora",
     label: "Aurora",
     type: "gradient",
     value: "linear-gradient(135deg, #e0f7f5 0%, #e6e9fb 50%, #fbe8f2 100%)",
-    group: "Simple",
-  },
-  {
-    id: "sunset",
-    label: "Sunset",
-    type: "gradient",
-    value: "linear-gradient(160deg, #ffe8d6 0%, #ffd3d3 60%, #ffc2e2 100%)",
     group: "Simple",
   },
   {
@@ -157,23 +145,10 @@ export const BACKGROUND_PRESETS = [
     group: "Simple",
   },
 
-  // --- Doodles: tiny repeating emoji/icon motifs ---------------------------
-  {
-    id: "doodle",
-    label: "Doodle",
-    type: "pattern",
-    value: svgToPatternUrl(
-      "<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28'><circle cx='2' cy='2' r='1.4' fill='#999999' fill-opacity='0.35'/></svg>"
-    ),
-    backgroundColor: "#f6f4ee",
-    group: "Doodles",
-  },
+  // --- Doodles: tiny repeating motifs (kept only the two that read as
+  //     distinct from each other; the rest were the same dot-grid look) ----
   { id: "stars", label: "Stars", type: "pattern", value: emojiTile("✨"), backgroundSize: "48px 48px", backgroundColor: "#faf9f4", group: "Doodles" },
-  { id: "hearts", label: "Hearts", type: "pattern", value: emojiTile("💕"), backgroundSize: "48px 48px", backgroundColor: "#fdf1f4", group: "Doodles" },
   { id: "coffee", label: "Coffee", type: "pattern", value: emojiTile("☕"), backgroundSize: "48px 48px", backgroundColor: "#f7f1e9", group: "Doodles" },
-  { id: "clouds", label: "Clouds", type: "pattern", value: emojiTile("☁️"), backgroundSize: "48px 48px", backgroundColor: "#eef4fa", group: "Doodles" },
-  { id: "confetti", label: "Confetti", type: "pattern", value: emojiTile("🎉"), backgroundSize: "48px 48px", backgroundColor: "#faf6ee", group: "Doodles" },
-  { id: "paws", label: "Paws", type: "pattern", value: emojiTile("🐾"), backgroundSize: "48px 48px", backgroundColor: "#f4f1ea", group: "Doodles" },
 
   // --- Nature: illustrated outdoor scenes and tiled motifs -----------------
   {
@@ -210,24 +185,6 @@ export const BACKGROUND_PRESETS = [
     group: "Nature",
   },
   {
-    id: "blossom",
-    label: "Blossom",
-    type: "pattern",
-    value: svgToPatternUrl(
-      `<svg xmlns="http://www.w3.org/2000/svg" width="70" height="70">
-        <path d="M0 60 Q20 40 40 50 T70 30" stroke="#8a6a56" stroke-width="2" fill="none" opacity="0.45"/>
-        <circle cx="15" cy="52" r="4" fill="#f7c6d9" opacity="0.7"/>
-        <circle cx="34" cy="46" r="4" fill="#f7c6d9" opacity="0.7"/>
-        <circle cx="52" cy="34" r="4" fill="#f9d3e2" opacity="0.7"/>
-        <circle cx="60" cy="26" r="3" fill="#f9d3e2" opacity="0.7"/>
-      </svg>`
-    ),
-    backgroundSize: "70px 70px",
-    backgroundColor: "#fdf5f7",
-    group: "Nature",
-  },
-
-  {
     id: "ocean-waves",
     label: "Ocean Waves",
     type: "scene",
@@ -245,8 +202,33 @@ export const BACKGROUND_PRESETS = [
     fit: "cover",
     group: "Nature",
   },
+  {
+    id: "northern-lights",
+    label: "Northern Lights",
+    type: "scene",
+    value: svgToSceneUrl(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 260">
+        <defs><linearGradient id="nl" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#04070f"/><stop offset="1" stop-color="#0c1a2b"/>
+        </linearGradient></defs>
+        <rect width="400" height="260" fill="url(#nl)"/>
+        <g fill="#ffffff">
+          <circle cx="30" cy="30" r="1.3" opacity="0.8"/><circle cx="90" cy="20" r="1" opacity="0.6"/>
+          <circle cx="160" cy="35" r="1.4" opacity="0.7"/><circle cx="250" cy="15" r="1" opacity="0.6"/>
+          <circle cx="320" cy="40" r="1.3" opacity="0.7"/><circle cx="370" cy="20" r="1" opacity="0.5"/>
+        </g>
+        <path d="M0 120 Q100 60 200 110 T400 100" stroke="#4ee6a8" stroke-width="18" fill="none" opacity="0.35"/>
+        <path d="M0 150 Q120 90 220 140 T400 130" stroke="#63c8ff" stroke-width="14" fill="none" opacity="0.3"/>
+        <path d="M0 100 Q140 40 260 90 T400 70" stroke="#b98bff" stroke-width="10" fill="none" opacity="0.25"/>
+        <polygon points="0,260 0,220 60,190 120,225 180,200 240,230 300,205 360,235 400,215 400,260" fill="#050a12" opacity="0.9"/>
+      </svg>`
+    ),
+    fit: "cover",
+    group: "Nature",
+  },
 
-  // --- Tech: circuit lines, retro synthwave, and starfields ----------------
+  // --- Tech: circuit lines, retro synthwave, starfields, and a couple of
+  //     dev-culture picks that fit an AI chat platform well -----------------
   {
     id: "circuit",
     label: "Circuit",
@@ -325,6 +307,48 @@ export const BACKGROUND_PRESETS = [
     fit: "cover",
     group: "Tech",
   },
+  {
+    id: "matrix-rain",
+    label: "Matrix Rain",
+    type: "pattern",
+    value: svgToPatternUrl(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="60" height="100">
+        <rect width="60" height="100" fill="#050806"/>
+        <text x="6" y="16" font-family="monospace" font-size="13" fill="#3ddc72" opacity="0.55">01</text>
+        <text x="30" y="30" font-family="monospace" font-size="13" fill="#3ddc72" opacity="0.35">1A</text>
+        <text x="10" y="48" font-family="monospace" font-size="13" fill="#3ddc72" opacity="0.7">F0</text>
+        <text x="34" y="64" font-family="monospace" font-size="13" fill="#3ddc72" opacity="0.3">01</text>
+        <text x="4" y="82" font-family="monospace" font-size="13" fill="#3ddc72" opacity="0.5">C3</text>
+        <text x="32" y="96" font-family="monospace" font-size="13" fill="#3ddc72" opacity="0.6">9E</text>
+      </svg>`
+    ),
+    backgroundSize: "60px 100px",
+    backgroundColor: "#050806",
+    group: "Tech",
+  },
+  {
+    id: "terminal",
+    label: "Terminal",
+    type: "scene",
+    value: svgToSceneUrl(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 260">
+        <defs>
+          <pattern id="scan" width="4" height="4" patternUnits="userSpaceOnUse">
+            <rect width="4" height="2" fill="#000000" opacity="0"/>
+            <rect y="2" width="4" height="2" fill="#000000" opacity="0.4"/>
+          </pattern>
+        </defs>
+        <rect width="400" height="260" fill="#0a0f0b"/>
+        <text x="24" y="46" font-family="monospace" font-size="15" fill="#3ddc72">$ agenza --model gpt-oss-120b</text>
+        <text x="24" y="74" font-family="monospace" font-size="15" fill="#2fae5c">&gt; session ready</text>
+        <rect x="24" y="90" width="11" height="17" fill="#3ddc72" opacity="0.9"/>
+        <rect width="400" height="260" fill="url(#scan)"/>
+        <rect width="400" height="260" fill="none" stroke="#3ddc72" stroke-opacity="0.15" stroke-width="6"/>
+      </svg>`
+    ),
+    fit: "cover",
+    group: "Tech",
+  },
 
   // --- Skylines: buildings and cityscapes -----------------------------------
   {
@@ -362,36 +386,43 @@ export const BACKGROUND_PRESETS = [
     fit: "cover",
     group: "Skylines",
   },
-
-  // --- Cartoon: playful, flat illustration styles --------------------------
   {
-    id: "cloud-pop",
-    label: "Cloud Pop",
-    type: "pattern",
-    value: svgToPatternUrl(
-      `<svg xmlns="http://www.w3.org/2000/svg" width="100" height="70">
-        <g fill="#ffffff" opacity="0.6">
-          <ellipse cx="25" cy="35" rx="18" ry="12"/>
-          <ellipse cx="40" cy="30" rx="14" ry="10"/>
-          <ellipse cx="12" cy="30" rx="10" ry="8"/>
+    id: "tokyo-nights",
+    label: "Tokyo Nights",
+    type: "scene",
+    value: svgToSceneUrl(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 260">
+        <defs><linearGradient id="tn" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#1a1035"/><stop offset="1" stop-color="#3a1b52"/>
+        </linearGradient></defs>
+        <rect width="400" height="260" fill="url(#tn)"/>
+        <circle cx="330" cy="50" r="30" fill="#ff6fd8" opacity="0.5"/>
+        <g fill="#150a29" opacity="0.9">
+          <rect x="0" y="160" width="35" height="100"/>
+          <rect x="40" y="120" width="28" height="140"/>
+          <rect x="75" y="175" width="40" height="85"/>
+          <rect x="120" y="95" width="32" height="165"/>
+          <rect x="160" y="150" width="45" height="110"/>
+          <rect x="215" y="70" width="28" height="190"/>
+          <rect x="250" y="135" width="40" height="125"/>
+          <rect x="295" y="100" width="32" height="160"/>
+          <rect x="335" y="165" width="45" height="95"/>
         </g>
-        <circle cx="80" cy="15" r="8" fill="#ffd77a" opacity="0.7"/>
+        <g fill="#5ef1ff" opacity="0.8">
+          <rect x="8" y="175" width="5" height="8"/><rect x="20" y="200" width="5" height="8"/>
+          <rect x="48" y="140" width="5" height="8"/><rect x="48" y="170" width="5" height="8"/>
+          <rect x="128" y="115" width="5" height="8"/><rect x="140" y="150" width="5" height="8"/>
+        </g>
+        <g fill="#ff6fd8" opacity="0.85">
+          <rect x="168" y="165" width="5" height="8"/><rect x="188" y="200" width="5" height="8"/>
+          <rect x="223" y="90" width="5" height="8"/><rect x="223" y="125" width="5" height="8"/>
+          <rect x="258" y="155" width="5" height="8"/><rect x="278" y="190" width="5" height="8"/>
+          <rect x="303" y="120" width="5" height="8"/><rect x="343" y="190" width="5" height="8"/>
+        </g>
       </svg>`
     ),
-    backgroundSize: "100px 70px",
-    backgroundColor: "#cfe8fb",
-    group: "Cartoon",
-  },
-  {
-    id: "comic-dots",
-    label: "Comic Dots",
-    type: "pattern",
-    value: svgToPatternUrl(
-      `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><circle cx="20" cy="20" r="6" fill="#ff5a5a" opacity="0.3"/></svg>`
-    ),
-    backgroundSize: "40px 40px",
-    backgroundColor: "#fff6d8",
-    group: "Cartoon",
+    fit: "cover",
+    group: "Skylines",
   },
 ];
 

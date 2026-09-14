@@ -26,7 +26,7 @@ from langgraph.config import get_stream_writer
 from psycopg_pool import ConnectionPool
 
 from email_utils import send_smtp_email
-from jobs import search_adzuna_jobs, JobSearchError
+from job_aggregator import search_all_sources
 from job_scoring import score_and_rank_jobs
 
 Path("data").mkdir(exist_ok=True)
@@ -241,10 +241,12 @@ def send_email(
 
 
 # ---------------------------------------------------------------------------
-# Job search tool — lets the agent pull live job listings from Adzuna,
-# scoped to whatever the signed-in user saved in Settings -> Job Search,
-# and ranked by relevance against that (plus their resume, if uploaded —
-# see database.Resume / extract_resume_data below and job_scoring.py).
+# Job search tool — pulls live listings from FIVE sources (see
+# job_aggregator.search_all_sources): Adzuna, RemoteOK, Remotive, and any
+# RSS career-page feeds configured via CAREER_RSS_FEEDS — scoped to
+# whatever the signed-in user saved in Settings -> Job Search, and ranked
+# by relevance against that (plus their resume, if uploaded — see
+# database.Resume / extract_resume_data below and job_scoring.py).
 #
 # Per-user preferences (role, location, day range, min salary, etc.) and
 # the parsed resume are threaded in via the run config, same as the SMTP
@@ -278,7 +280,11 @@ def search_jobs(
     count: int | None = None,
     config: Annotated[RunnableConfig, InjectedToolArg] = None,
 ) -> str:
-    """Search for current job listings, ranked by relevance, and show them to the user.
+    """Search for current job listings across multiple sources, ranked by relevance, and show them to the user.
+
+    Pulls from Adzuna, RemoteOK, Remotive, and any configured company
+    career-page feeds in one combined, deduplicated, relevance-ranked list
+    — you don't need to ask the user which source to use.
 
     Call this whenever the user asks to see, find, or check jobs/openings —
     e.g. "show me jobs", "find backend developer roles", "give me 3 jobs
@@ -353,25 +359,29 @@ def search_jobs(
 
     # Fetch a wider pool than requested so relevance ranking has more than
     # just `requested_count` candidates to actually rank — otherwise
-    # "ranking" the exact N results Adzuna's own date-sort already gave us
-    # wouldn't meaningfully reorder anything.
+    # "ranking" the exact N results we already got wouldn't meaningfully
+    # reorder anything.
     fetch_count = min(_MAX_JOB_COUNT, max(requested_count * 2, requested_count + 10))
 
-    try:
-        jobs, total_count = search_adzuna_jobs(
-            app_id=ADZUNA_APP_ID,
-            app_key=ADZUNA_APP_KEY,
-            what=effective_role,
-            where=effective_location,
-            country=prefs.get("country") or "in",
-            results_per_page=fetch_count,
-            max_days_old=effective_days,
-            min_salary=prefs.get("min_salary"),
-            job_type=job_type,
-            what_exclude=prefs.get("keywords_exclude"),
-        )
-    except JobSearchError as e:
-        return str(e)
+    jobs, total_count, source_errors = search_all_sources(
+        app_id=ADZUNA_APP_ID,
+        app_key=ADZUNA_APP_KEY,
+        what=effective_role,
+        where=effective_location,
+        country=prefs.get("country") or "in",
+        results_per_page=fetch_count,
+        max_days_old=effective_days,
+        min_salary=prefs.get("min_salary"),
+        job_type=job_type,
+        what_exclude=prefs.get("keywords_exclude"),
+    )
+
+    if not jobs:
+        if source_errors:
+            # Every source failed (or none are configured) — surface the
+            # most informative single message rather than a dict dump.
+            return "Job search failed: " + "; ".join(f"{name}: {msg}" for name, msg in source_errors.items())
+        return f"No jobs found matching '{effective_role}'{f' in {effective_location}' if effective_location else ''}."
 
     jobs = score_and_rank_jobs(
         jobs,
@@ -389,10 +399,12 @@ def search_jobs(
     where_note = f" in {effective_location}" if effective_location else ""
     role_note = f"'{effective_role}'" + (" (inferred from the user's resume)" if used_resume_role else "")
     top_score_note = f" Top match: {jobs[0]['relevance_score']}%." if jobs else ""
+    sources_used = sorted({job.get("source", "Unknown") for job in jobs})
+    sources_note = f" Sources: {', '.join(sources_used)}." if sources_used else ""
 
     return (
         f"Found {total_count} job(s) matching {role_note}{where_note}, ranked by relevance; "
-        f"showing {len(jobs)} to the user.{top_score_note}"
+        f"showing {len(jobs)} to the user.{top_score_note}{sources_note}"
     )
 
 

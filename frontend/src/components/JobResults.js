@@ -114,12 +114,21 @@ export default function JobResults({ jobs, count }) {
               key={key}
               className="rounded-xl border border-[var(--border-soft)] bg-[var(--bg-elevated)] px-4 py-3.5 shadow-sm"
             >
-              {hasScore && (
-                <span
-                  className={`mb-2 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11.5px] font-medium ${relevanceStyle(job.relevance_score)}`}
-                >
-                  {job.relevance_score}% match
-                </span>
+              {(hasScore || job.source) && (
+                <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                  {hasScore && (
+                    <span
+                      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11.5px] font-medium ${relevanceStyle(job.relevance_score)}`}
+                    >
+                      {job.relevance_score}% match
+                    </span>
+                  )}
+                  {job.source && (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--bg-canvas)] px-2 py-0.5 text-[11.5px] font-medium text-[var(--text-faint)]">
+                      {job.source}
+                    </span>
+                  )}
+                </div>
               )}
 
               <div className="flex items-start justify-between gap-3">

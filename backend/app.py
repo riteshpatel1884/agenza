@@ -254,7 +254,7 @@ def _job_preferences_to_dict(p):
         "location": p.location or "",
         "country": p.country or "in",
         "max_days_old": p.max_days_old or 3,
-        "results_per_page": p.results_per_page or 15,
+        "results_per_page": p.results_per_page or 40,
         "min_salary": p.min_salary,
         "job_type": p.job_type or "any",
         "remote_only": bool(p.remote_only),
@@ -291,7 +291,7 @@ async def save_job_preferences_route(request: Request, user_id: str = Depends(ge
 
     try:
         max_days_old = int(data.get("max_days_old") or 3)
-        results_per_page = int(data.get("results_per_page") or 15)
+        results_per_page = int(data.get("results_per_page") or 40)
     except (TypeError, ValueError):
         return JSONResponse({"error": "max_days_old and results_per_page must be numbers."}, status_code=400)
 

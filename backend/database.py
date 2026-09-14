@@ -146,7 +146,7 @@ class JobPreferences(Base):
     location = Column(String, default="")  # e.g. "Bangalore" or "Remote"
     country = Column(String, default="in")  # Adzuna 2-letter country code
     max_days_old = Column(Integer, default=3)  # "jobs from the last N days"
-    results_per_page = Column(Integer, default=15)
+    results_per_page = Column(Integer, default=40)
     min_salary = Column(Integer, nullable=True)
     job_type = Column(String, default="any")  # any | full_time | part_time | contract | permanent
     remote_only = Column(Integer, default=0)  # 1/0
@@ -578,7 +578,7 @@ def save_job_preferences(
     location: str = "",
     country: str = "in",
     max_days_old: int = 3,
-    results_per_page: int = 15,
+    results_per_page: int = 40,
     min_salary: int | None = None,
     job_type: str = "any",
     remote_only: bool = False,

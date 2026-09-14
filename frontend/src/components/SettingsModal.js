@@ -241,7 +241,7 @@ export default function SettingsModal({
     location: "",
     country: "in",
     max_days_old: 3,
-    results_per_page: 15,
+    results_per_page: 40,
     min_salary: "",
     job_type: "any",
     remote_only: false,
@@ -266,7 +266,7 @@ export default function SettingsModal({
             location: data.location || "",
             country: data.country || "in",
             max_days_old: data.max_days_old ?? 3,
-            results_per_page: data.results_per_page ?? 15,
+            results_per_page: data.results_per_page ?? 40,
             min_salary: data.min_salary ?? "",
             job_type: data.job_type || "any",
             remote_only: !!data.remote_only,
@@ -1034,10 +1034,10 @@ export default function SettingsModal({
                         onChange={(e) => setJobPrefs((f) => ({ ...f, results_per_page: Number(e.target.value) }))}
                         className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
                       >
-                        <option value={10}>10</option>
-                        <option value={15}>15</option>
-                        <option value={25}>25</option>
-                        <option value={50}>50</option>
+                        <option value={20}>20</option>
+                        <option value={40}>40</option>
+                        <option value={60}>60</option>
+                        <option value={100}>100</option>
                       </select>
                     </div>
                   </div>

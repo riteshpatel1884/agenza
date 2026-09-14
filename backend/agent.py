@@ -268,8 +268,8 @@ def send_email(
 ADZUNA_APP_ID = os.getenv("ADZUNA_APP_ID")
 ADZUNA_APP_KEY = os.getenv("ADZUNA_APP_KEY")
 
-_DEFAULT_JOB_COUNT = 10
-_MAX_JOB_COUNT = 50
+_DEFAULT_JOB_COUNT = 40
+_MAX_JOB_COUNT = 100
 
 
 @tool

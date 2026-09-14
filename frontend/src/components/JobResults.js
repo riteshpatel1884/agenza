@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-const PAGE_SIZE_OPTIONS = [25, 30];
+const JOBS_PER_PAGE = 20;
 
 function SearchIcon() {
   return (
@@ -120,25 +120,6 @@ function scoreTierColor(score) {
   return "#9A9CA6"; // faint gray — still a valid match, just not a standout
 }
 
-function ScoreRing({ score }) {
-  const color = scoreTierColor(score);
-  const angle = Math.max(0, Math.min(100, score)) * 3.6;
-
-  return (
-    <div
-      className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
-      style={{ background: `conic-gradient(${color} ${angle}deg, var(--border-soft) 0deg)` }}
-      title={`${score}% match`}
-    >
-      <div className="flex h-[34px] w-[34px] items-center justify-center rounded-full bg-[var(--bg-elevated)]">
-        <span className="text-[11px] font-semibold" style={{ color }}>
-          {score}
-        </span>
-      </div>
-    </div>
-  );
-}
-
 function CompanyAvatar({ name }) {
   const { bg, fg } = avatarStyle(name);
   const initial = (name || "?").trim().charAt(0).toUpperCase() || "?";
@@ -162,7 +143,7 @@ function JobCard({ job }) {
   return (
     <div className="group relative overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[var(--bg-elevated)] p-4 transition-all duration-150 hover:-translate-y-0.5 hover:border-[var(--accent)]/40 hover:shadow-[0_8px_24px_-12px_rgba(0,0,0,0.18)]">
       <div className="flex items-start gap-3">
-        {hasScore ? <ScoreRing score={job.relevance_score} /> : <CompanyAvatar name={job.company} />}
+        <CompanyAvatar name={job.company} />
 
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-3">
@@ -233,79 +214,32 @@ function JobCard({ job }) {
   );
 }
 
-function PageSizeToggle({ pageSize, onChange }) {
-  return (
-    <div className="flex items-center rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-0.5 text-[12px]">
-      {PAGE_SIZE_OPTIONS.map((size) => (
-        <button
-          key={size}
-          onClick={() => onChange(size)}
-          className={`rounded-md px-2.5 py-1 font-medium transition-colors ${
-            pageSize === size
-              ? "bg-[var(--accent)] text-[var(--accent-contrast)]"
-              : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-          }`}
-        >
-          {size}/page
-        </button>
-      ))}
-    </div>
-  );
-}
-
 function Pagination({ page, totalPages, onPageChange }) {
   if (totalPages <= 1) return null;
 
-  // Windowed page numbers: current page ± 1, plus first/last with ellipses
-  // so this stays compact even with dozens of pages of results.
-  const pages = new Set([1, totalPages, page, page - 1, page + 1]);
-  const sorted = [...pages].filter((p) => p >= 1 && p <= totalPages).sort((a, b) => a - b);
-
-  const items = [];
-  let prev = 0;
-  for (const p of sorted) {
-    if (p - prev > 1) items.push("ellipsis-" + p);
-    items.push(p);
-    prev = p;
-  }
-
   return (
-    <div className="mt-4 flex items-center justify-center gap-1">
+    <div className="mt-4 flex items-center justify-center gap-3">
       <button
         onClick={() => onPageChange(page - 1)}
         disabled={page <= 1}
-        className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] disabled:opacity-30"
-        aria-label="Previous page"
+        className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-1.5 text-[12.5px] font-medium text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-30"
+        aria-label="Previous 20 jobs"
       >
         <ChevronLeftIcon />
+        Previous
       </button>
 
-      {items.map((item) =>
-        typeof item === "number" ? (
-          <button
-            key={item}
-            onClick={() => onPageChange(item)}
-            className={`flex h-7 min-w-[28px] items-center justify-center rounded-lg px-1.5 text-[12.5px] font-medium transition-colors ${
-              item === page
-                ? "bg-[var(--accent)] text-[var(--accent-contrast)]"
-                : "text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
-            }`}
-          >
-            {item}
-          </button>
-        ) : (
-          <span key={item} className="px-1 text-[12px] text-[var(--text-faint)]">
-            …
-          </span>
-        )
-      )}
+      <span className="text-[12.5px] text-[var(--text-faint)]">
+        Page {page} of {totalPages}
+      </span>
 
       <button
         onClick={() => onPageChange(page + 1)}
         disabled={page >= totalPages}
-        className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] disabled:opacity-30"
-        aria-label="Next page"
+        className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-1.5 text-[12.5px] font-medium text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-30"
+        aria-label="Next 20 jobs"
       >
+        Next 20
         <ChevronRightIcon />
       </button>
     </div>
@@ -314,7 +248,6 @@ function Pagination({ page, totalPages, onPageChange }) {
 
 export default function JobResults({ jobs, count }) {
   const [query, setQuery] = useState("");
-  const [pageSize, setPageSize] = useState(25);
   const [page, setPage] = useState(1);
 
   const filtered = useMemo(() => {
@@ -325,11 +258,11 @@ export default function JobResults({ jobs, count }) {
     );
   }, [jobs, query]);
 
-  // Reset to page 1 whenever the visible set changes shape — otherwise a
-  // filter/page-size change could strand the user on a now-empty page.
+  // Reset to page 1 whenever the filter changes — otherwise it could strand
+  // the user on a now-empty page.
   useEffect(() => {
     setPage(1);
-  }, [query, pageSize]);
+  }, [query]);
 
   if (!jobs || jobs.length === 0) {
     return (
@@ -341,10 +274,10 @@ export default function JobResults({ jobs, count }) {
   }
 
   const hasScores = jobs.some((j) => typeof j.relevance_score === "number");
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const totalPages = Math.max(1, Math.ceil(filtered.length / JOBS_PER_PAGE));
   const currentPage = Math.min(page, totalPages);
-  const startIdx = (currentPage - 1) * pageSize;
-  const pageJobs = filtered.slice(startIdx, startIdx + pageSize);
+  const startIdx = (currentPage - 1) * JOBS_PER_PAGE;
+  const pageJobs = filtered.slice(startIdx, startIdx + JOBS_PER_PAGE);
 
   return (
     <div className="mt-3 w-full max-w-2xl">
@@ -361,22 +294,19 @@ export default function JobResults({ jobs, count }) {
           )}
         </div>
 
-        <div className="flex items-center gap-2">
-          {jobs.length > 4 && (
-            <div className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1">
-              <span className="text-[var(--text-faint)]">
-                <SearchIcon />
-              </span>
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Filter results"
-                className="w-28 bg-transparent text-[12px] text-[var(--text-primary)] placeholder-[var(--text-faint)] outline-none sm:w-36"
-              />
-            </div>
-          )}
-          <PageSizeToggle pageSize={pageSize} onChange={setPageSize} />
-        </div>
+        {jobs.length > 4 && (
+          <div className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1">
+            <span className="text-[var(--text-faint)]">
+              <SearchIcon />
+            </span>
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Filter results"
+              className="w-28 bg-transparent text-[12px] text-[var(--text-primary)] placeholder-[var(--text-faint)] outline-none sm:w-36"
+            />
+          </div>
+        )}
       </div>
 
       <div className="space-y-2.5">
@@ -389,7 +319,7 @@ export default function JobResults({ jobs, count }) {
 
       {totalPages > 1 && (
         <p className="mt-2 text-center text-[11.5px] text-[var(--text-faint)]">
-          Showing {startIdx + 1}–{Math.min(startIdx + pageSize, filtered.length)} of {filtered.length}
+          Showing {startIdx + 1}–{Math.min(startIdx + JOBS_PER_PAGE, filtered.length)} of {filtered.length}
         </p>
       )}
     </div>

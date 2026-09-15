@@ -685,8 +685,8 @@ app = FastAPI()
 FRONTEND_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "https://agenza-ai.vercel.app",
-    "https://leaderlab.in"
+    "https://leaderlab.in",
+    "https://www.leaderlab.in"
 ]
 
 app.add_middleware(

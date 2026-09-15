@@ -715,7 +715,7 @@ export default function SettingsModal({
                         type="text"
                         value={emailForm.smtp_from_name}
                         onChange={(e) => setEmailForm((f) => ({ ...f, smtp_from_name: e.target.value }))}
-                        placeholder="agenza.ai"
+                        placeholder="LeaderLab"
                         className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
                       />
                     </div>

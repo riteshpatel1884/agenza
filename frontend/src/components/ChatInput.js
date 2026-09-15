@@ -167,7 +167,7 @@ export default function ChatInput({ onSend, disabled, getToken }) {
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Message Nova"
+          placeholder="Message..."
           rows={1}
           disabled={disabled}
           className="max-h-40 w-full resize-none bg-transparent text-[15px] leading-6 text-[var(--text-primary)] placeholder-[var(--text-faint)] outline-none"

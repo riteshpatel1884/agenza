@@ -140,7 +140,7 @@ export default function Sidebar({
         <div className="flex items-center justify-between gap-2 px-4 pt-5 pb-4">
           <div className="flex items-center gap-2">
             
-            <span className="text-[14px] font-medium tracking-tight text-[#ECEDF2]">agenza.ai</span>
+            <span className="text-[14px] font-medium tracking-tight text-[#ECEDF2]">LeaderLab</span>
           </div>
           <div className="flex items-center gap-1">
             <button

@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { UserButton,useUser  } from "@clerk/nextjs";
-const { user, isLoaded } = useUser();
+import { UserButton, useUser } from "@clerk/nextjs";
 
 function PlusIcon() {
   return (
@@ -66,6 +65,7 @@ export default function Sidebar({
   mobileOpen,
   onCloseMobile,
 }) {
+  const { user, isLoaded } = useUser();
   const [query, setQuery] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [draftTitle, setDraftTitle] = useState("");
@@ -123,6 +123,10 @@ export default function Sidebar({
     onCloseMobile?.();
   }
 
+  const displayName = isLoaded
+    ? user?.fullName || user?.primaryEmailAddress?.emailAddress || "Account"
+    : "Loading...";
+
   return (
     <>
       {mobileOpen && (
@@ -140,7 +144,6 @@ export default function Sidebar({
       >
         <div className="flex items-center justify-between gap-2 px-4 pt-5 pb-4">
           <div className="flex items-center gap-2">
-            
             <span className="text-[14px] font-medium tracking-tight text-[#ECEDF2]">LeaderLab</span>
           </div>
           <div className="flex items-center gap-1">
@@ -287,12 +290,10 @@ export default function Sidebar({
           </ul>
         </div>
 
-            <div className="flex items-center gap-2.5 border-t border-white/10 px-4 py-3">
-      <UserButton afterSignOutUrl="/sign-in" />
-      <span className="truncate text-[13px] text-[#9A9CA6]">
-        {isLoaded ? (user?.fullName || user?.primaryEmailAddress?.emailAddress || "Account") : "Loading..."}
-      </span>
-    </div>
+        <div className="flex items-center gap-2.5 border-t border-white/10 px-4 py-3">
+          <UserButton afterSignOutUrl="/sign-in" />
+          <span className="truncate text-[13px] text-[#9A9CA6]">{displayName}</span>
+        </div>
       </aside>
     </>
   );

@@ -72,5 +72,9 @@ def get_current_user_id(authorization: str | None = Header(default=None)) -> str
         return verify_clerk_token(token)
     except HTTPException:
         raise
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid or expired session. Please sign in again.")
+    except Exception as e:
+        print(f"CLERK AUTH ERROR: {type(e).__name__}: {e}")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired session."
+        )

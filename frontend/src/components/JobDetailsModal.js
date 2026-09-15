@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 
 function CloseIcon() {
   return (
@@ -82,16 +83,32 @@ function scoreColor(score) {
  * only thing that opens the external posting.
  */
 export default function JobDetailsModal({ job, onClose }) {
+  // Portals need a real DOM node, which doesn't exist during SSR — render
+  // nothing until after mount so server and client markup agree.
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   useEffect(() => {
     if (!job) return;
     function handleKey(e) {
       if (e.key === "Escape") onClose();
     }
     document.addEventListener("keydown", handleKey);
-    return () => document.removeEventListener("keydown", handleKey);
+
+    // Stop the chat list behind the modal from scrolling under it.
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.removeEventListener("keydown", handleKey);
+      document.body.style.overflow = previousOverflow;
+    };
   }, [job, onClose]);
 
-  if (!job) return null;
+  if (!job || !mounted) return null;
 
   const salary = formatSalary(job.salary_min, job.salary_max);
   const description = stripHtml(job.description);
@@ -99,15 +116,20 @@ export default function JobDetailsModal({ job, onClose }) {
   const breakdown = job.score_breakdown || {};
   const breakdownEntries = Object.entries(breakdown).filter(([, v]) => typeof v === "number");
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
+      className="fixed inset-0 z-[100] flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-[var(--border)] bg-[var(--bg-elevated)] shadow-[var(--shadow-dropdown)] sm:rounded-2xl">
-        <div className="flex items-start justify-between gap-3 border-b border-[var(--border-soft)] px-5 py-4">
+      <style>{`
+        .job-modal-scroll::-webkit-scrollbar { width: 0; height: 0; }
+        .job-modal-scroll { scrollbar-width: none; -ms-overflow-style: none; }
+      `}</style>
+
+      <div className="flex max-h-[85dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-[var(--border)] bg-[var(--bg-elevated)] shadow-[var(--shadow-dropdown)] sm:max-h-[80dvh] sm:rounded-2xl">
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--border-soft)] px-5 py-4">
           <div className="min-w-0">
             <h2 className="text-[16px] font-semibold leading-snug text-[var(--text-primary)]">{job.title}</h2>
             <p className="mt-0.5 text-[13.5px] text-[var(--text-muted)]">{job.company}</p>
@@ -121,7 +143,7 @@ export default function JobDetailsModal({ job, onClose }) {
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        <div className="job-modal-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12.5px] text-[var(--text-faint)]">
             {job.location && (
               <span className="flex items-center gap-1">
@@ -195,7 +217,7 @@ export default function JobDetailsModal({ job, onClose }) {
           )}
         </div>
 
-        <div className="flex items-center justify-end gap-2 border-t border-[var(--border-soft)] px-5 py-3.5">
+        <div className="flex shrink-0 items-center justify-end gap-2 border-t border-[var(--border-soft)] bg-[var(--bg-elevated)] px-5 py-3.5 pb-[max(0.875rem,env(safe-area-inset-bottom))]">
           <button
             onClick={onClose}
             className="rounded-lg border border-[var(--border)] px-3.5 py-2 text-[13px] font-medium text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
@@ -216,6 +238,7 @@ export default function JobDetailsModal({ job, onClose }) {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

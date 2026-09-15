@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { UserButton } from "@clerk/nextjs";
+import { UserButton,useUser  } from "@clerk/nextjs";
+const { user, isLoaded } = useUser();
 
 function PlusIcon() {
   return (
@@ -286,10 +287,12 @@ export default function Sidebar({
           </ul>
         </div>
 
-        <div className="flex items-center gap-2.5 border-t border-white/10 px-4 py-3">
-          <UserButton afterSignOutUrl="/sign-in" />
-          <span className="text-[13px] text-[#9A9CA6]">Account</span>
-        </div>
+            <div className="flex items-center gap-2.5 border-t border-white/10 px-4 py-3">
+      <UserButton afterSignOutUrl="/sign-in" />
+      <span className="truncate text-[13px] text-[#9A9CA6]">
+        {isLoaded ? (user?.fullName || user?.primaryEmailAddress?.emailAddress || "Account") : "Loading..."}
+      </span>
+    </div>
       </aside>
     </>
   );

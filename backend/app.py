@@ -668,7 +668,12 @@ from database import (
     get_resume,
     save_resume,
     delete_resume,
+    update_resume_fields,
     resume_to_dict,
+    save_job,
+    list_saved_jobs,
+    delete_saved_job,
+    saved_job_to_dict,
     get_usage_status,
     add_usage,
     UNLIMITED_TOKEN_LIMIT,
@@ -1001,6 +1006,87 @@ async def upload_resume_route(file: UploadFile = File(...), user_id: str = Depen
 async def delete_resume_route(user_id: str = Depends(get_current_user_id)):
     delete_resume(user_id)
     return {"configured": False}
+
+
+@app.patch("/resume")
+async def update_resume_route(request: Request, user_id: str = Depends(get_current_user_id)):
+    """
+    Hand-edits the signed-in user's parsed resume — used by the Settings >
+    Job Search > Resume "Edit" mode to fix up preferred roles, years of
+    experience, and skills (including deleting one) without re-uploading a
+    file. Always overwrites all three fields with what's sent, so the
+    frontend should submit the user's full current lists each time (not a
+    diff) — an empty skills array is a deliberate "clear all skills",
+    not "leave alone".
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body."}, status_code=400)
+
+    raw_skills = data.get("skills")
+    raw_roles = data.get("preferred_roles")
+
+    if not isinstance(raw_skills, list) or not isinstance(raw_roles, list):
+        return JSONResponse({"error": "skills and preferred_roles must be lists."}, status_code=400)
+
+    experience_years = data.get("experience_years")
+    if experience_years is not None:
+        try:
+            experience_years = float(experience_years)
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "experience_years must be a number."}, status_code=400)
+        if experience_years < 0:
+            return JSONResponse({"error": "experience_years can't be negative."}, status_code=400)
+
+    skills = [s.strip() for s in raw_skills if isinstance(s, str) and s.strip()]
+    preferred_roles = [r.strip() for r in raw_roles if isinstance(r, str) and r.strip()]
+
+    resume = update_resume_fields(
+        user_id, skills=skills, preferred_roles=preferred_roles, experience_years=experience_years
+    )
+
+    return {"configured": True, **resume_to_dict(resume)}
+
+
+# ---------------------------------------------------------------------------
+# Saved jobs — bookmarking a listing from a search result so the user can
+# come back to it later. Surfaced in the header's saved-jobs popup.
+# job_id is a stable string computed the same way on the frontend (see
+# computeJobId in lib/api.js) — the listing's URL when it has one,
+# otherwise a "title::company::location" fallback — since none of the
+# sources in job_aggregator.py hand back a real id of their own.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/saved-jobs")
+async def get_saved_jobs_route(user_id: str = Depends(get_current_user_id)):
+    jobs = list_saved_jobs(user_id)
+    return {"jobs": [saved_job_to_dict(j) for j in jobs]}
+
+
+@app.post("/saved-jobs")
+async def save_job_route(request: Request, user_id: str = Depends(get_current_user_id)):
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body."}, status_code=400)
+
+    job_id = (data.get("job_id") or "").strip()
+    if not job_id:
+        return JSONResponse({"error": "job_id is required."}, status_code=400)
+
+    saved = save_job(user_id, job_id, data)
+    return {"saved": True, "job": saved_job_to_dict(saved)}
+
+
+@app.delete("/saved-jobs")
+async def delete_saved_job_route(job_id: str, user_id: str = Depends(get_current_user_id)):
+    """job_id comes in as a query param (?job_id=...) rather than a path
+    segment — saved job ids are often full URLs, which don't survive being
+    embedded in a path segment cleanly across every server/proxy."""
+    delete_saved_job(user_id, job_id)
+    return {"deleted": job_id}
 
 
 def _automation_to_dict(a):

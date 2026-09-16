@@ -57,7 +57,16 @@
 
 import JobResults from "./JobResults";
 
-export default function ChatMessage({ role, content, onBusyBackground, jobs, jobsCount, jobsPageSize }) {
+export default function ChatMessage({
+  role,
+  content,
+  onBusyBackground,
+  jobs,
+  jobsCount,
+  jobsPageSize,
+  savedJobIds,
+  onToggleSaveJob,
+}) {
   const isUser = role === "user";
   const isEmptyAssistant = !isUser && content.length === 0 && !jobs;
 
@@ -103,7 +112,15 @@ export default function ChatMessage({ role, content, onBusyBackground, jobs, job
                 {content}
               </div>
             )}
-            {jobs && <JobResults jobs={jobs} count={jobsCount} pageSize={jobsPageSize} />}
+            {jobs && (
+              <JobResults
+                jobs={jobs}
+                count={jobsCount}
+                pageSize={jobsPageSize}
+                savedJobIds={savedJobIds}
+                onToggleSave={onToggleSaveJob}
+              />
+            )}
           </>
         )}
       </div>

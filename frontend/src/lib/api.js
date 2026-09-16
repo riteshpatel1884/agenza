@@ -536,6 +536,83 @@ export async function deleteResume(token) {
 }
 
 /**
+ * Hand-edits the signed-in user's resume: preferred roles, years of
+ * experience, and skills (add or delete one). Always send the FULL current
+ * lists, not a diff — an empty skills array clears every skill.
+ * body: { skills: string[], preferred_roles: string[], experience_years: number|null }
+ */
+export async function updateResumeDetails(token, updates) {
+  const res = await fetch(`${API_BASE}/resume`, {
+    method: "PATCH",
+    headers: authHeaders(token, { "Content-Type": "application/json" }),
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to update resume");
+  }
+  return res.json();
+}
+
+/**
+ * Derives a stable id for a job listing so it can be saved/looked-up later.
+ * None of the job sources (Adzuna, RemoteOK, Remotive, RSS) hand back a
+ * real id of their own, so this mirrors the backend's job_id computation
+ * (see app.py) exactly: the listing's URL when it has one, otherwise a
+ * lowercase "title::company::location" fallback. Keep this in sync with
+ * the backend if either side ever changes.
+ */
+export function computeJobId(job) {
+  const url = (job?.url || "").trim();
+  if (url) return url;
+  const title = (job?.title || "").trim().toLowerCase();
+  const company = (job?.company || "").trim().toLowerCase();
+  const location = (job?.location || "").trim().toLowerCase();
+  return `${title}::${company}::${location}`;
+}
+
+/**
+ * Fetches the signed-in user's bookmarked jobs, most recently saved first.
+ */
+export async function fetchSavedJobs(token) {
+  const res = await fetch(`${API_BASE}/saved-jobs`, {
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error("Failed to load saved jobs");
+  return res.json();
+}
+
+/**
+ * Bookmarks a job listing. Pass the full job object as returned by a chat
+ * search (title, company, url, etc.) — job_id is computed and attached
+ * automatically.
+ */
+export async function saveJob(token, job) {
+  const res = await fetch(`${API_BASE}/saved-jobs`, {
+    method: "POST",
+    headers: authHeaders(token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ ...job, job_id: computeJobId(job) }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to save job");
+  }
+  return res.json();
+}
+
+/**
+ * Removes a job from the signed-in user's saved list.
+ */
+export async function deleteSavedJob(token, jobId) {
+  const res = await fetch(`${API_BASE}/saved-jobs?job_id=${encodeURIComponent(jobId)}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error("Failed to remove saved job");
+  return res.json().catch(() => ({}));
+}
+
+/**
  * Streams a chat response from the backend.
  *
  * The backend sends Server-Sent-Events-style chunks ("data: {...}\n\n") but

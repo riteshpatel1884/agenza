@@ -475,6 +475,7 @@ import { useAuth } from "@clerk/nextjs";
 import Sidebar from "../components/Sidebar";
 import UsageMeter from "@/components/UsageMeter";
 import UsageDetailsModal from "../components/UsageDetailsModal";
+import SavedJobsModal from "../components/SavedJobsModal";
 import ChatMessage from "../components/ChatMessage";
 import ChatInput from "../components/ChatInput";
 import ThemeToggle from "../components/ThemeToggle";
@@ -486,6 +487,10 @@ import {
   streamChat,
   renameConversation,
   deleteConversation,
+  fetchSavedJobs,
+  saveJob,
+  deleteSavedJob,
+  computeJobId,
 } from "../lib/api";
 import {
   applyAccentColor,
@@ -552,6 +557,14 @@ function PanelIcon() {
   );
 }
 
+function BookmarkIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
 export default function Home() {
   // isLoaded: Clerk has finished checking the session. isSignedIn should
   // always be true here in practice — middleware.js already redirects
@@ -575,6 +588,16 @@ export default function Home() {
   const [usage, setUsage] = useState(null); // { limit, tokens_used, allowed, seconds_until_reset, total_tokens_used }
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [usageModalOpen, setUsageModalOpen] = useState(false);
+
+  // --- Saved jobs ------------------------------------------------------------
+  // Bookmarked listings, surfaced from the header next to the usage pill (see
+  // SavedJobsModal). savedJobIds mirrors savedJobs as a Set of job_id strings
+  // (see computeJobId in lib/api.js) purely so JobCard/JobDetailsModal can do
+  // an O(1) "is this one saved?" check while rendering a page of results.
+  const [savedJobs, setSavedJobs] = useState([]);
+  const [savedJobsLoaded, setSavedJobsLoaded] = useState(false);
+  const [savedJobsModalOpen, setSavedJobsModalOpen] = useState(false);
+  const savedJobIds = new Set(savedJobs.map((j) => j.job_id));
 
   // --- Customization state -------------------------------------------------
   const [theme, setTheme] = useState("light");
@@ -623,6 +646,7 @@ export default function Home() {
 
     refreshConversations();
     refreshUsage();
+    refreshSavedJobs();
 
     const savedAccent = loadAccentColor();
     setAccentColor(savedAccent);
@@ -687,6 +711,61 @@ export default function Home() {
       setSecondsLeft(data.seconds_until_reset || 0);
     } catch {
       // Non-fatal — the usage pill just stays stale until the next refresh.
+    }
+  }
+
+  async function refreshSavedJobs() {
+    try {
+      const token = await getToken();
+      const data = await fetchSavedJobs(token);
+      setSavedJobs(data.jobs || []);
+    } catch {
+      // Non-fatal — the saved-jobs list just stays stale until the next refresh.
+    } finally {
+      setSavedJobsLoaded(true);
+    }
+  }
+
+  // Toggles a job in/out of the saved list, called from the bookmark button
+  // on a JobCard, JobDetailsModal, or SavedJobsModal. Updates optimistically
+  // so the bookmark icon flips instantly, then rolls back if the request
+  // fails.
+  async function handleToggleSaveJob(job) {
+    const jobId = computeJobId(job);
+    const alreadySaved = savedJobs.some((j) => j.job_id === jobId);
+    const previous = savedJobs;
+
+    if (alreadySaved) {
+      setSavedJobs((prev) => prev.filter((j) => j.job_id !== jobId));
+    } else {
+      setSavedJobs((prev) => [{ ...job, job_id: jobId, saved_at: new Date().toISOString() }, ...prev]);
+    }
+
+    try {
+      const token = await getToken();
+      if (alreadySaved) {
+        await deleteSavedJob(token, jobId);
+      } else {
+        await saveJob(token, job);
+      }
+    } catch {
+      setSavedJobs(previous);
+      setErrorMsg(alreadySaved ? "Could not remove that saved job." : "Could not save that job.");
+    }
+  }
+
+  // Dedicated "remove by id" handler for SavedJobsModal's Remove button,
+  // which only ever has the saved row (job_id + a copy of the listing), not
+  // a live job object off a fresh search result.
+  async function handleRemoveSavedJob(jobId) {
+    const previous = savedJobs;
+    setSavedJobs((prev) => prev.filter((j) => j.job_id !== jobId));
+    try {
+      const token = await getToken();
+      await deleteSavedJob(token, jobId);
+    } catch {
+      setSavedJobs(previous);
+      setErrorMsg("Could not remove that saved job.");
     }
   }
 
@@ -851,6 +930,15 @@ export default function Home() {
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+            <button
+              type="button"
+              onClick={() => setSavedJobsModalOpen(true)}
+              title="Saved jobs"
+              className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-2 py-1.5 text-[12px] font-medium text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] sm:px-2.5"
+            >
+              <BookmarkIcon />
+              {savedJobs.length > 0 && <span className="tabular-nums">{savedJobs.length}</span>}
+            </button>
             <UsageMeter usage={usage} secondsLeft={secondsLeft} onClick={() => setUsageModalOpen(true)} />
             <button
               onClick={() => setSettingsOpen(true)}
@@ -895,6 +983,8 @@ export default function Home() {
                   jobsCount={m.jobsCount}
                   jobsPageSize={m.jobsPageSize}
                   onBusyBackground={hasCustomBackground}
+                  savedJobIds={savedJobIds}
+                  onToggleSaveJob={handleToggleSaveJob}
                 />
               ))}
               <div ref={bottomRef} />
@@ -932,6 +1022,14 @@ export default function Home() {
         onClose={() => setUsageModalOpen(false)}
         usage={usage}
         secondsLeft={secondsLeft}
+      />
+
+      <SavedJobsModal
+        open={savedJobsModalOpen}
+        onClose={() => setSavedJobsModalOpen(false)}
+        jobs={savedJobs}
+        loading={!savedJobsLoaded}
+        onRemove={handleRemoveSavedJob}
       />
     </div>
   );

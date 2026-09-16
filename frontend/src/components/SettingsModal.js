@@ -20,6 +20,7 @@ import {
   getResume,
   uploadResume,
   deleteResume,
+  updateResumeDetails,
 } from "../lib/api";
 
 function CloseIcon() {
@@ -78,6 +79,30 @@ function ClockIcon() {
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="9" />
       <path d="M12 7v5l3 3" />
+    </svg>
+  );
+}
+
+function PencilIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+    </svg>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
+function TagCloseIcon() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 6L6 18M6 6l12 12" />
     </svg>
   );
 }
@@ -345,6 +370,96 @@ export default function SettingsModal({
       setResumeError("Could not remove your resume.");
     } finally {
       setResumeUploading(false);
+    }
+  }
+
+  // --- Resume edit mode ------------------------------------------------------
+  // Lets the user hand-correct what the parser picked up — best-fit roles,
+  // years of experience, and skills (including deleting one) — without
+  // re-uploading the file. Draft state is separate from `resume` so
+  // Cancel can discard in-progress edits cleanly.
+  const [editingResume, setEditingResume] = useState(false);
+  const [draftRoles, setDraftRoles] = useState([]);
+  const [draftSkills, setDraftSkills] = useState([]);
+  const [draftExperienceYears, setDraftExperienceYears] = useState("");
+  const [newRoleInput, setNewRoleInput] = useState("");
+  const [newSkillInput, setNewSkillInput] = useState("");
+  const [resumeSaving, setResumeSaving] = useState(false);
+
+  function startEditingResume() {
+    setDraftRoles(resume?.preferred_roles || []);
+    setDraftSkills(resume?.skills || []);
+    setDraftExperienceYears(
+      typeof resume?.experience_years === "number" ? String(resume.experience_years) : ""
+    );
+    setNewRoleInput("");
+    setNewSkillInput("");
+    setResumeError("");
+    setEditingResume(true);
+  }
+
+  function cancelEditingResume() {
+    setEditingResume(false);
+    setResumeError("");
+  }
+
+  function addDraftRole() {
+    const value = newRoleInput.trim();
+    if (!value || draftRoles.some((r) => r.toLowerCase() === value.toLowerCase())) {
+      setNewRoleInput("");
+      return;
+    }
+    setDraftRoles((prev) => [...prev, value]);
+    setNewRoleInput("");
+  }
+
+  function removeDraftRole(role) {
+    setDraftRoles((prev) => prev.filter((r) => r !== role));
+  }
+
+  function addDraftSkill() {
+    const value = newSkillInput.trim();
+    if (!value || draftSkills.some((s) => s.toLowerCase() === value.toLowerCase())) {
+      setNewSkillInput("");
+      return;
+    }
+    setDraftSkills((prev) => [...prev, value]);
+    setNewSkillInput("");
+  }
+
+  // Used both by the per-skill "x" button and to let the user clear every
+  // skill out entirely if they want — an empty list is a deliberate save,
+  // not treated as "no change" (see PATCH /resume in app.py).
+  function removeDraftSkill(skill) {
+    setDraftSkills((prev) => prev.filter((s) => s !== skill));
+  }
+
+  async function handleSaveResumeEdits() {
+    let experienceYears = null;
+    if (draftExperienceYears.trim() !== "") {
+      const parsed = Number(draftExperienceYears);
+      if (Number.isNaN(parsed) || parsed < 0) {
+        setResumeError("Years of experience must be a positive number.");
+        return;
+      }
+      experienceYears = parsed;
+    }
+
+    setResumeSaving(true);
+    setResumeError("");
+    try {
+      const token = await getToken();
+      const data = await updateResumeDetails(token, {
+        skills: draftSkills,
+        preferred_roles: draftRoles,
+        experience_years: experienceYears,
+      });
+      setResume((prev) => ({ ...prev, ...data }));
+      setEditingResume(false);
+    } catch (err) {
+      setResumeError(err.message || "Could not save your changes.");
+    } finally {
+      setResumeSaving(false);
     }
   }
 
@@ -1092,7 +1207,7 @@ export default function SettingsModal({
                     className="hidden"
                   />
 
-                  {!resume?.configured && (
+                  {!resume?.configured && !editingResume && (
                     <button
                       type="button"
                       onClick={() => resumeFileInputRef.current?.click()}
@@ -1104,108 +1219,267 @@ export default function SettingsModal({
                     </button>
                   )}
 
-                  {resume?.configured && (
+                  {!resume?.configured && !editingResume && (
+                    <button
+                      type="button"
+                      onClick={startEditingResume}
+                      className="text-[12px] font-medium text-[var(--accent)] hover:underline"
+                    >
+                      Or add roles, experience, and skills by hand instead
+                    </button>
+                  )}
+
+                  {(resume?.configured || editingResume) && (
                     <div className="rounded-lg border border-[var(--border-soft)] bg-[var(--bg-canvas)] px-3.5 py-3">
                       <div className="flex items-center justify-between gap-2">
                         <p className="truncate text-[13px] font-medium text-[var(--text-primary)]">
-                          {resume.filename || "Resume"}
+                          {resume?.filename || (resume?.configured ? "Resume" : "No file uploaded")}
                         </p>
-                        <div className="flex shrink-0 gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => resumeFileInputRef.current?.click()}
-                            disabled={resumeUploading}
-                            className="rounded-md border border-[var(--border)] px-2 py-1 text-[11.5px] font-medium text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] disabled:opacity-50"
-                          >
-                            {resumeUploading ? "Reading…" : "Replace"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleRemoveResume}
-                            disabled={resumeUploading}
-                            className="rounded-md border border-[var(--border)] px-2 py-1 text-[11.5px] font-medium text-[var(--danger)] transition-colors hover:bg-[var(--danger)]/10 disabled:opacity-50"
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      </div>
-
-                      {typeof resume.experience_years === "number" && (
-                        <p className="mt-1 text-[12px] text-[var(--text-muted)]">
-                          ~{resume.experience_years} year{resume.experience_years === 1 ? "" : "s"} of experience
-                        </p>
-                      )}
-
-                      {resume.preferred_roles?.length > 0 && (
-                        <div className="mt-2.5">
-                          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[var(--text-faint)]">
-                            Best-fit roles
-                          </p>
-                          <div className="flex flex-wrap gap-1.5">
-                            {resume.preferred_roles.map((role) => (
-                              <span
-                                key={role}
-                                className="rounded-full bg-[var(--accent-soft)] px-2.5 py-0.5 text-[11.5px] text-[var(--text-primary)]"
+                        {!editingResume && (
+                          <div className="flex shrink-0 gap-1.5">
+                            {resume?.configured && (
+                              <button
+                                type="button"
+                                onClick={() => resumeFileInputRef.current?.click()}
+                                disabled={resumeUploading}
+                                className="rounded-md border border-[var(--border)] px-2 py-1 text-[11.5px] font-medium text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] disabled:opacity-50"
                               >
-                                {role}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {resume.skills?.length > 0 && (
-                        <div className="mt-2.5">
-                          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[var(--text-faint)]">
-                            Skills
-                          </p>
-                          <div className="flex flex-wrap gap-1.5">
-                            {resume.skills.slice(0, 24).map((skill) => (
-                              <span
-                                key={skill}
-                                className="rounded-full border border-[var(--border)] px-2.5 py-0.5 text-[11.5px] text-[var(--text-muted)]"
+                                {resumeUploading ? "Reading…" : "Replace"}
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={startEditingResume}
+                              className="flex items-center gap-1 rounded-md border border-[var(--border)] px-2 py-1 text-[11.5px] font-medium text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)]"
+                            >
+                              <PencilIcon />
+                              Edit
+                            </button>
+                            {resume?.configured && (
+                              <button
+                                type="button"
+                                onClick={handleRemoveResume}
+                                disabled={resumeUploading}
+                                className="rounded-md border border-[var(--border)] px-2 py-1 text-[11.5px] font-medium text-[var(--danger)] transition-colors hover:bg-[var(--danger)]/10 disabled:opacity-50"
                               >
-                                {skill}
-                              </span>
-                            ))}
-                            {resume.skills.length > 24 && (
-                              <span className="text-[11.5px] text-[var(--text-faint)]">
-                                +{resume.skills.length - 24} more
-                              </span>
+                                Remove
+                              </button>
                             )}
                           </div>
-                        </div>
+                        )}
+                      </div>
+
+                      {!editingResume && (
+                        <>
+                          {typeof resume.experience_years === "number" && (
+                            <p className="mt-1 text-[12px] text-[var(--text-muted)]">
+                              ~{resume.experience_years} year{resume.experience_years === 1 ? "" : "s"} of experience
+                            </p>
+                          )}
+
+                          {resume.preferred_roles?.length > 0 && (
+                            <div className="mt-2.5">
+                              <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[var(--text-faint)]">
+                                Best-fit roles
+                              </p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {resume.preferred_roles.map((role) => (
+                                  <span
+                                    key={role}
+                                    className="rounded-full bg-[var(--accent-soft)] px-2.5 py-0.5 text-[11.5px] text-[var(--text-primary)]"
+                                  >
+                                    {role}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {resume.skills?.length > 0 && (
+                            <div className="mt-2.5">
+                              <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[var(--text-faint)]">
+                                Skills
+                              </p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {resume.skills.slice(0, 24).map((skill) => (
+                                  <span
+                                    key={skill}
+                                    className="rounded-full border border-[var(--border)] px-2.5 py-0.5 text-[11.5px] text-[var(--text-muted)]"
+                                  >
+                                    {skill}
+                                  </span>
+                                ))}
+                                {resume.skills.length > 24 && (
+                                  <span className="text-[11.5px] text-[var(--text-faint)]">
+                                    +{resume.skills.length - 24} more
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {resume.experience?.length > 0 && (
+                            <div className="mt-2.5">
+                              <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[var(--text-faint)]">
+                                Experience
+                              </p>
+                              <ul className="space-y-1">
+                                {resume.experience.slice(0, 5).map((role, i) => (
+                                  <li key={i} className="text-[12.5px] text-[var(--text-muted)]">
+                                    <span className="text-[var(--text-primary)]">{role.title || "Role"}</span>
+                                    {role.company ? ` · ${role.company}` : ""}
+                                    {role.years ? ` · ${role.years} yr` : ""}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {resume.education?.length > 0 && (
+                            <div className="mt-2.5">
+                              <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[var(--text-faint)]">
+                                Education
+                              </p>
+                              <ul className="space-y-1">
+                                {resume.education.map((ed, i) => (
+                                  <li key={i} className="text-[12.5px] text-[var(--text-muted)]">
+                                    {[ed.degree, ed.institution, ed.year].filter(Boolean).join(" · ")}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </>
                       )}
 
-                      {resume.experience?.length > 0 && (
-                        <div className="mt-2.5">
-                          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[var(--text-faint)]">
-                            Experience
-                          </p>
-                          <ul className="space-y-1">
-                            {resume.experience.slice(0, 5).map((role, i) => (
-                              <li key={i} className="text-[12.5px] text-[var(--text-muted)]">
-                                <span className="text-[var(--text-primary)]">{role.title || "Role"}</span>
-                                {role.company ? ` · ${role.company}` : ""}
-                                {role.years ? ` · ${role.years} yr` : ""}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
+                      {editingResume && (
+                        <div className="mt-3 space-y-4">
+                          <div>
+                            <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-[var(--text-faint)]">
+                              Years of experience
+                            </label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.5"
+                              value={draftExperienceYears}
+                              onChange={(e) => setDraftExperienceYears(e.target.value)}
+                              placeholder="e.g. 3"
+                              className="w-28 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                            />
+                          </div>
 
-                      {resume.education?.length > 0 && (
-                        <div className="mt-2.5">
-                          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[var(--text-faint)]">
-                            Education
-                          </p>
-                          <ul className="space-y-1">
-                            {resume.education.map((ed, i) => (
-                              <li key={i} className="text-[12.5px] text-[var(--text-muted)]">
-                                {[ed.degree, ed.institution, ed.year].filter(Boolean).join(" · ")}
-                              </li>
-                            ))}
-                          </ul>
+                          <div>
+                            <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-[var(--text-faint)]">
+                              Best-fit roles
+                            </label>
+                            <div className="flex flex-wrap gap-1.5">
+                              {draftRoles.map((role) => (
+                                <span
+                                  key={role}
+                                  className="flex items-center gap-1 rounded-full bg-[var(--accent-soft)] py-0.5 pl-2.5 pr-1.5 text-[11.5px] text-[var(--text-primary)]"
+                                >
+                                  {role}
+                                  <button
+                                    type="button"
+                                    onClick={() => removeDraftRole(role)}
+                                    title={`Remove ${role}`}
+                                    className="flex h-3.5 w-3.5 items-center justify-center rounded-full text-[var(--text-faint)] hover:text-[var(--text-primary)]"
+                                  >
+                                    <TagCloseIcon />
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                            <div className="mt-1.5 flex items-center gap-1.5">
+                              <input
+                                value={newRoleInput}
+                                onChange={(e) => setNewRoleInput(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    addDraftRole();
+                                  }
+                                }}
+                                placeholder="Add a role, e.g. Backend Developer"
+                                className="flex-1 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                              />
+                              <button
+                                type="button"
+                                onClick={addDraftRole}
+                                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)]"
+                              >
+                                <PlusIcon />
+                              </button>
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-[var(--text-faint)]">
+                              Skills
+                            </label>
+                            {draftSkills.length === 0 && (
+                              <p className="mb-1.5 text-[12px] text-[var(--text-faint)]">No skills listed.</p>
+                            )}
+                            <div className="flex flex-wrap gap-1.5">
+                              {draftSkills.map((skill) => (
+                                <span
+                                  key={skill}
+                                  className="flex items-center gap-1 rounded-full border border-[var(--border)] py-0.5 pl-2.5 pr-1.5 text-[11.5px] text-[var(--text-muted)]"
+                                >
+                                  {skill}
+                                  <button
+                                    type="button"
+                                    onClick={() => removeDraftSkill(skill)}
+                                    title={`Delete ${skill}`}
+                                    className="flex h-3.5 w-3.5 items-center justify-center rounded-full text-[var(--text-faint)] hover:text-[var(--danger)]"
+                                  >
+                                    <TagCloseIcon />
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                            <div className="mt-1.5 flex items-center gap-1.5">
+                              <input
+                                value={newSkillInput}
+                                onChange={(e) => setNewSkillInput(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    addDraftSkill();
+                                  }
+                                }}
+                                placeholder="Add a skill, e.g. React"
+                                className="flex-1 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                              />
+                              <button
+                                type="button"
+                                onClick={addDraftSkill}
+                                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)]"
+                              >
+                                <PlusIcon />
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 pt-1">
+                            <button
+                              type="button"
+                              onClick={handleSaveResumeEdits}
+                              disabled={resumeSaving}
+                              className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-[12.5px] font-medium text-[var(--accent-contrast)] transition-colors hover:bg-[var(--accent-hover)] disabled:opacity-50"
+                            >
+                              {resumeSaving ? "Saving…" : "Save changes"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={cancelEditingResume}
+                              disabled={resumeSaving}
+                              className="rounded-md border border-[var(--border)] px-3 py-1.5 text-[12.5px] font-medium text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] disabled:opacity-50"
+                            >
+                              Cancel
+                            </button>
+                          </div>
                         </div>
                       )}
                     </div>

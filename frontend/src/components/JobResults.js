@@ -331,6 +331,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import JobDetailsModal from "./JobDetailsModal";
+import { computeJobId } from "../lib/api";
 
 const DEFAULT_JOBS_PER_PAGE = 20;
 
@@ -402,6 +403,23 @@ function SparkIcon() {
   );
 }
 
+function BookmarkIcon({ filled }) {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill={filled ? "currentColor" : "none"}
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
 function timeAgo(isoString) {
   if (!isoString) return "";
   const then = new Date(isoString).getTime();
@@ -464,7 +482,7 @@ function CompanyAvatar({ name }) {
   );
 }
 
-function JobCard({ job, onOpen }) {
+function JobCard({ job, onOpen, saved, onToggleSave }) {
   const salary = formatSalary(job.salary_min, job.salary_max);
   const description = stripHtml(job.description);
   const snippet = description.length > 200 ? `${description.slice(0, 200).trim()}…` : description;
@@ -492,16 +510,35 @@ function JobCard({ job, onOpen }) {
               <p className="mt-0.5 truncate text-[13px] text-[var(--text-muted)]">{job.company}</p>
             </div>
 
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onOpen(job);
-              }}
-              className="flex shrink-0 items-center gap-1 rounded-lg bg-[var(--accent)] px-3 py-1.5 text-[12px] font-medium text-[var(--accent-contrast)] transition-colors hover:bg-[var(--accent-hover)]"
-            >
-              View
-            </button>
+            <div className="flex shrink-0 items-center gap-1.5">
+              {onToggleSave && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleSave(job);
+                  }}
+                  title={saved ? "Remove from saved jobs" : "Save this job"}
+                  className={`flex h-7 w-7 items-center justify-center rounded-lg border transition-colors ${
+                    saved
+                      ? "border-[var(--accent)]/40 bg-[var(--accent-soft)] text-[var(--accent-soft-text)]"
+                      : "border-[var(--border)] text-[var(--text-faint)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  <BookmarkIcon filled={saved} />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpen(job);
+                }}
+                className="flex items-center gap-1 rounded-lg bg-[var(--accent)] px-3 py-1.5 text-[12px] font-medium text-[var(--accent-contrast)] transition-colors hover:bg-[var(--accent-hover)]"
+              >
+                View
+              </button>
+            </div>
           </div>
 
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -621,7 +658,7 @@ function Pagination({ page, totalPages, onPageChange }) {
   );
 }
 
-export default function JobResults({ jobs, count, pageSize }) {
+export default function JobResults({ jobs, count, pageSize, savedJobIds, onToggleSave }) {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [selectedJob, setSelectedJob] = useState(null);
@@ -691,7 +728,13 @@ export default function JobResults({ jobs, count, pageSize }) {
 
       <div className="space-y-2.5">
         {pageJobs.map((job, i) => (
-          <JobCard key={`${job.url || job.title}-${startIdx + i}`} job={job} onOpen={setSelectedJob} />
+          <JobCard
+            key={`${job.url || job.title}-${startIdx + i}`}
+            job={job}
+            onOpen={setSelectedJob}
+            saved={savedJobIds?.has(computeJobId(job))}
+            onToggleSave={onToggleSave}
+          />
         ))}
       </div>
 
@@ -703,7 +746,12 @@ export default function JobResults({ jobs, count, pageSize }) {
         </p>
       )}
 
-      <JobDetailsModal job={selectedJob} onClose={() => setSelectedJob(null)} />
+      <JobDetailsModal
+        job={selectedJob}
+        onClose={() => setSelectedJob(null)}
+        saved={selectedJob ? savedJobIds?.has(computeJobId(selectedJob)) : false}
+        onToggleSave={onToggleSave}
+      />
     </div>
   );
 }

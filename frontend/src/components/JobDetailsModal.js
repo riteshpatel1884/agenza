@@ -37,6 +37,23 @@ function ArrowUpRightIcon() {
   );
 }
 
+function BookmarkIcon({ filled }) {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill={filled ? "currentColor" : "none"}
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
 function timeAgo(isoString) {
   if (!isoString) return "";
   const then = new Date(isoString).getTime();
@@ -82,7 +99,7 @@ function scoreColor(score) {
  * role is worth their time WITHOUT leaving the app — "Apply" here is the
  * only thing that opens the external posting.
  */
-export default function JobDetailsModal({ job, onClose }) {
+export default function JobDetailsModal({ job, onClose, saved, onToggleSave }) {
   // Portals need a real DOM node, which doesn't exist during SSR — render
   // nothing until after mount so server and client markup agree.
   const [mounted, setMounted] = useState(false);
@@ -224,6 +241,20 @@ export default function JobDetailsModal({ job, onClose }) {
           >
             Not interested
           </button>
+          {onToggleSave && (
+            <button
+              onClick={() => onToggleSave(job)}
+              title={saved ? "Remove from saved jobs" : "Save this job"}
+              className={`flex items-center gap-1.5 rounded-lg border px-3.5 py-2 text-[13px] font-medium transition-colors ${
+                saved
+                  ? "border-[var(--accent)]/40 bg-[var(--accent-soft)] text-[var(--accent-soft-text)]"
+                  : "border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+              }`}
+            >
+              <BookmarkIcon filled={saved} />
+              {saved ? "Saved" : "Save"}
+            </button>
+          )}
           {job.url && (
             <a
               href={job.url}

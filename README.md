@@ -1,4 +1,4 @@
-# Agenza AI
+# LeaderLab
 
 An AI chat platform I'm building in phases - starting with a solid core chat experience and expanding from there.
 

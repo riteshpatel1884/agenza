@@ -2,7 +2,7 @@
 
 An AI chat platform I'm building in phases - starting with a solid core chat experience and expanding from there.
 
-**Live demo:** https://agenza-ai.vercel.app
+**Live demo:** https://leaderlab.in
 
 ---
 

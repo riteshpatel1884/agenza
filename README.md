@@ -31,17 +31,24 @@ Next.js · Clerk · FastAPI · LangGraph · Groq / Gemini / Mistral · Adzuna / 
 <img width="587" height="379" alt="image" src="https://github.com/user-attachments/assets/3fe86ccc-e9fb-4004-9afe-b3f87f7e39c7" />
 
 ## User Interface
-<img width="958" height="533" alt="image" src="https://github.com/user-attachments/assets/e1e47fea-c808-48ad-8bff-41ef8d8c3b01" />
+<img width="959" height="599" alt="image" src="https://github.com/user-attachments/assets/a6071b15-67e8-438f-ac9f-8a2d72c5cf33" />
+
 
 ## Job Customization 
-<img width="956" height="536" alt="image" src="https://github.com/user-attachments/assets/29340751-fd9c-4cfb-b66e-01df577ea56c" />
+<img width="959" height="599" alt="image" src="https://github.com/user-attachments/assets/d832f5cf-c189-4179-9061-83fa669d406d" />
+
 
 ## Token Usage
-<img width="959" height="535" alt="image" src="https://github.com/user-attachments/assets/aa3ff2aa-015b-4f0c-99be-9881c756bd6c" />
+<img width="959" height="599" alt="image" src="https://github.com/user-attachments/assets/94324b89-5ba6-484c-8eb3-4e1967ff3473" />
+
 
 ## Job Search 
-<img width="958" height="532" alt="image" src="https://github.com/user-attachments/assets/53de231f-768c-40fb-a96a-66089658ef1c" />
-<img width="956" height="536" alt="image" src="https://github.com/user-attachments/assets/4478eea4-771e-4886-a335-d2a19e9c227c" />
-<img width="959" height="539" alt="image" src="https://github.com/user-attachments/assets/a8f1426b-2fed-4397-aa1a-2c77f55b7360" />
+<img width="959" height="599" alt="image" src="https://github.com/user-attachments/assets/9d9527d4-a71e-432f-a111-2bd652a3d5bd" />
+
+<img width="959" height="599" alt="image" src="https://github.com/user-attachments/assets/473d6009-eaec-495f-8d33-bbe49cffb447" />
+
+<img width="959" height="599" alt="image" src="https://github.com/user-attachments/assets/758eee37-2c4e-488f-8962-2b99c83bae26" />
+
+<img width="959" height="599" alt="image" src="https://github.com/user-attachments/assets/e0de769d-d23d-4e08-842c-6ec0608651d7" />
 
 

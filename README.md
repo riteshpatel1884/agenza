@@ -3,7 +3,7 @@
 agenza is a chat-based job search assistant. Instead of juggling five different job boards and a spreadsheet, you talk to it - "find me AI Engineer roles in India" - and it searches, ranks, and explains its results in the same conversation.
 
 ## Live Link 
-https://agenza-jobs.vercel.app/
+https://agenza-jobs.vercel.app
 
 ## Why
 
